@@ -10,10 +10,10 @@
 
 #include "webrtc/pc/test/fakeaudiocapturemodule.h"
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/refcount.h"
-#include "webrtc/base/thread.h"
-#include "webrtc/base/timeutils.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/refcount.h"
+#include "webrtc/rtc_base/thread.h"
+#include "webrtc/rtc_base/timeutils.h"
 
 // Audio sample value that is high enough that it doesn't occur naturally when
 // frames are being faked. E.g. NetEq will not generate this large sample value
@@ -272,19 +272,6 @@ int32_t FakeAudioCaptureModule::SetAGC(bool /*enable*/) {
 }
 
 bool FakeAudioCaptureModule::AGC() const {
-  RTC_NOTREACHED();
-  return 0;
-}
-
-int32_t FakeAudioCaptureModule::SetWaveOutVolume(uint16_t /*volume_left*/,
-                                                 uint16_t /*volume_right*/) {
-  RTC_NOTREACHED();
-  return 0;
-}
-
-int32_t FakeAudioCaptureModule::WaveOutVolume(
-    uint16_t* /*volume_left*/,
-    uint16_t* /*volume_right*/) const {
   RTC_NOTREACHED();
   return 0;
 }
@@ -624,7 +611,7 @@ bool FakeAudioCaptureModule::ShouldStartProcessing() {
 void FakeAudioCaptureModule::UpdateProcessing(bool start) {
   if (start) {
     if (!process_thread_) {
-      process_thread_.reset(new rtc::Thread());
+      process_thread_ = rtc::Thread::Create();
       process_thread_->Start();
     }
     process_thread_->Post(RTC_FROM_HERE, this, MSG_START_PROCESS);

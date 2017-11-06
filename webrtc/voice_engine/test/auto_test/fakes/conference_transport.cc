@@ -12,31 +12,33 @@
 
 #include <string>
 
-#include "webrtc/base/byteorder.h"
-#include "webrtc/base/timeutils.h"
+#include "webrtc/rtc_base/byteorder.h"
+#include "webrtc/rtc_base/timeutils.h"
 #include "webrtc/system_wrappers/include/sleep.h"
 #include "webrtc/voice_engine/channel_proxy.h"
 #include "webrtc/voice_engine/voice_engine_impl.h"
 
-namespace {
-  static const unsigned int kReflectorSsrc = 0x0000;
-  static const unsigned int kLocalSsrc = 0x0001;
-  static const unsigned int kFirstRemoteSsrc = 0x0002;
-  static const webrtc::CodecInst kCodecInst =
-      {120, "opus", 48000, 960, 2, 64000};
-  static const int kAudioLevelHeaderId = 1;
-
-  static unsigned int ParseRtcpSsrc(const void* data, size_t len) {
-    const size_t ssrc_pos = 4;
-    unsigned int ssrc = 0;
-    if (len >= (ssrc_pos + sizeof(ssrc))) {
-      ssrc = rtc::GetBE32(static_cast<const char*>(data) + ssrc_pos);
-    }
-    return ssrc;
-  }
-}  // namespace
-
+namespace webrtc {
 namespace voetest {
+
+namespace {
+
+static const unsigned int kReflectorSsrc = 0x0000;
+static const unsigned int kLocalSsrc = 0x0001;
+static const unsigned int kFirstRemoteSsrc = 0x0002;
+static const webrtc::CodecInst kCodecInst = {120, "opus", 48000, 960, 2, 64000};
+static const int kAudioLevelHeaderId = 1;
+
+static unsigned int ParseRtcpSsrc(const void* data, size_t len) {
+  const size_t ssrc_pos = 4;
+  unsigned int ssrc = 0;
+  if (len >= (ssrc_pos + sizeof(ssrc))) {
+    ssrc = rtc::GetBE32(static_cast<const char*>(data) + ssrc_pos);
+  }
+  return ssrc;
+}
+
+}  // namespace
 
 ConferenceTransport::ConferenceTransport()
     : packet_event_(webrtc::EventWrapper::Create()),
@@ -53,6 +55,9 @@ ConferenceTransport::ConferenceTransport()
   local_network_ = webrtc::VoENetwork::GetInterface(local_voe_);
   local_rtp_rtcp_ = webrtc::VoERTP_RTCP::GetInterface(local_voe_);
 
+  local_apm_ = webrtc::AudioProcessing::Create();
+  local_base_->Init(nullptr, local_apm_.get(), nullptr);
+
   // In principle, we can use one VoiceEngine to achieve the same goal. Well, in
   // here, we use two engines to make it more like reality.
   remote_voe_ = webrtc::VoiceEngine::Create();
@@ -62,7 +67,9 @@ ConferenceTransport::ConferenceTransport()
   remote_rtp_rtcp_ = webrtc::VoERTP_RTCP::GetInterface(remote_voe_);
   remote_file_ = webrtc::VoEFile::GetInterface(remote_voe_);
 
-  EXPECT_EQ(0, local_base_->Init());
+  remote_apm_ = webrtc::AudioProcessing::Create();
+  remote_base_->Init(nullptr, remote_apm_.get(), nullptr);
+
   local_sender_ = local_base_->CreateChannel();
   static_cast<webrtc::VoiceEngineImpl*>(local_voe_)
       ->GetChannelProxy(local_sender_)
@@ -72,10 +79,8 @@ ConferenceTransport::ConferenceTransport()
   EXPECT_EQ(0, local_rtp_rtcp_->
       SetSendAudioLevelIndicationStatus(local_sender_, true,
                                         kAudioLevelHeaderId));
-
   EXPECT_EQ(0, local_base_->StartSend(local_sender_));
 
-  EXPECT_EQ(0, remote_base_->Init());
   reflector_ = remote_base_->CreateChannel();
   static_cast<webrtc::VoiceEngineImpl*>(remote_voe_)
       ->GetChannelProxy(reflector_)
@@ -297,4 +302,6 @@ bool ConferenceTransport::GetReceiverStatistics(unsigned int id,
   EXPECT_EQ(0, local_rtp_rtcp_->GetRTCPStatistics(dst, *stats));
   return true;
 }
+
 }  // namespace voetest
+}  // namespace webrtc

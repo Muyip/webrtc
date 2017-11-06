@@ -38,13 +38,10 @@ declare_args() {
 
   # Enable this if the Opus version upon which WebRTC is built supports direct
   # encoding of 120 ms packets.
-  rtc_opus_support_120ms_ptime = false
+  rtc_opus_support_120ms_ptime = true
 
   # Enable this to let the Opus audio codec change complexity on the fly.
   rtc_opus_variable_complexity = false
-
-  # Disable to use absolute header paths for some libraries.
-  rtc_relative_path = true
 
   # Used to specify an external Jsoncpp include path when not compiling the
   # library that comes with WebRTC (i.e. rtc_build_json == 0).
@@ -78,9 +75,7 @@ declare_args() {
   rtc_enable_sctp = true
 
   # Disable these to not build components which can be externally provided.
-  rtc_build_expat = true
   rtc_build_json = true
-  rtc_build_libjpeg = true
   rtc_build_libsrtp = true
   rtc_build_libvpx = true
   rtc_libvpx_build_vp9 = true
@@ -107,7 +102,14 @@ declare_args() {
   # See http://clang.llvm.org/docs/SanitizerCoverage.html .
   rtc_sanitize_coverage = ""
 
+  # Links a default implementation of task queues to targets
+  # that depend on the target rtc_task_queue. Set to false to
+  # use an external implementation.
+  rtc_link_task_queue_impl = true
+
   # Enable libevent task queues on platforms that support it.
+  # rtc_link_task_queue_impl must be set to true for this to
+  # have an effect.
   if (is_win || is_mac || is_ios || is_nacl) {
     rtc_enable_libevent = false
     rtc_build_libevent = false
@@ -147,6 +149,12 @@ declare_args() {
   # By default, use normal platform audio support or dummy audio, but don't
   # use file-based audio playout and record.
   rtc_use_dummy_audio_file_devices = false
+
+  # When set to true, replace the audio output with a sinus tone at 440Hz.
+  # The ADM will ask for audio data from WebRTC but instead of reading real
+  # audio samples from NetEQ, a sinus tone will be generated and replace the
+  # real audio samples.
+  rtc_audio_device_plays_sinus_tone = false
 
   # When set to true, test targets will declare the files needed to run memcheck
   # as data dependencies. This is to enable memcheck execution on swarming bots.
@@ -211,6 +219,10 @@ webrtc_root = get_path_info(".", "abspath")
 # native code is built as part of Chromium.
 rtc_common_configs = [ webrtc_root + ":common_config" ]
 
+if (is_mac || is_ios) {
+  rtc_common_configs += [ "//build/config/compiler:enable_arc" ]
+}
+
 # Global public configuration that should be applied to all WebRTC targets. You
 # normally shouldn't need to include this in your target as it's automatically
 # included when using the rtc_* templates. It set the defines, include paths and
@@ -263,6 +275,10 @@ template("rtc_test") {
     if (defined(invoker.public_configs)) {
       public_configs += invoker.public_configs
     }
+    if (!build_with_chromium && is_android) {
+      android_manifest = webrtc_root + "test/android/AndroidManifest.xml"
+      deps += [ webrtc_root + "test:native_test_java" ]
+    }
   }
 }
 
@@ -299,9 +315,10 @@ template("rtc_executable") {
     configs -= rtc_remove_configs
     configs -= invoker.suppressed_configs
     deps = [
-      "//build/config/sanitizers:deps",
+      "//build/config:exe_and_shlib_deps",
     ]
     deps += invoker.deps
+
     public_configs = [ rtc_common_inherited_config ]
     if (defined(invoker.public_configs)) {
       public_configs += invoker.public_configs

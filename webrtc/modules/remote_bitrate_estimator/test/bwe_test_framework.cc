@@ -14,7 +14,8 @@
 
 #include <sstream>
 
-#include "webrtc/base/constructormagic.h"
+#include "webrtc/rtc_base/constructormagic.h"
+#include "webrtc/rtc_base/safe_minmax.h"
 
 namespace webrtc {
 namespace testing {
@@ -151,6 +152,14 @@ void MediaPacket::SetAbsSendTimeMs(int64_t abs_send_time_ms) {
   header_.extension.absoluteSendTime = ((static_cast<int64_t>(abs_send_time_ms *
     (1 << 18)) + 500) / 1000) & 0x00fffffful;
 }
+
+BbrBweFeedback::BbrBweFeedback(
+    int flow_id,
+    int64_t send_time_us,
+    int64_t latest_send_time_ms,
+    const std::vector<uint16_t>& packet_feedback_vector)
+    : FeedbackPacket(flow_id, send_time_us, latest_send_time_ms),
+      packet_feedback_vector_(packet_feedback_vector) {}
 
 RembFeedback::RembFeedback(int flow_id,
                            int64_t send_time_us,
@@ -398,8 +407,8 @@ namespace {
 inline int64_t TruncatedNSigmaGaussian(Random* const random,
                                        int64_t mean,
                                        int64_t std_dev) {
-  int64_t gaussian_random = random->Gaussian(mean, std_dev);
-  return std::max(std::min(gaussian_random, kN * std_dev), -kN * std_dev);
+  const int64_t gaussian_random = random->Gaussian(mean, std_dev);
+  return rtc::SafeClamp(gaussian_random, -kN * std_dev, kN * std_dev);
 }
 }
 
@@ -509,12 +518,12 @@ void ChokeFilter::RunFor(int64_t /*time_ms*/, Packets* in_out) {
   for (PacketsIt it = in_out->begin(); it != in_out->end(); ) {
     int64_t earliest_send_time_us =
         std::max(last_send_time_us_, (*it)->send_time_us());
-
     int64_t new_send_time_us =
         earliest_send_time_us +
         ((*it)->payload_size() * 8 * 1000 + capacity_kbps_ / 2) /
             capacity_kbps_;
-
+    BWE_TEST_LOGGING_PLOT(0, "MaxThroughput_", new_send_time_us / 1000,
+                          capacity_kbps_);
     if (delay_cap_helper_->ShouldSendPacket(new_send_time_us,
                                             (*it)->send_time_us())) {
       (*it)->set_send_time_us(new_send_time_us);

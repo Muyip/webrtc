@@ -16,10 +16,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "webrtc/base/criticalsection.h"
 #include "webrtc/modules/rtp_rtcp/include/rtp_receiver.h"
 #include "webrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h"
 #include "webrtc/modules/rtp_rtcp/source/rtp_receiver_strategy.h"
+#include "webrtc/rtc_base/criticalsection.h"
 #include "webrtc/typedefs.h"
 
 namespace webrtc {
@@ -79,7 +79,7 @@ class RtpReceiverImpl : public RtpReceiver {
                               bool* is_red,
                               PayloadUnion* payload);
 
-  void UpdateSources();
+  void UpdateSources(const rtc::Optional<uint8_t>& ssrc_audio_level);
   void RemoveOutdatedSources(int64_t now_ms);
 
   Clock* clock_;

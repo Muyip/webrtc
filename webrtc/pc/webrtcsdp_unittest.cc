@@ -14,18 +14,18 @@
 #include <vector>
 
 #include "webrtc/api/jsepsessiondescription.h"
-#include "webrtc/base/checks.h"
-#include "webrtc/base/gunit.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/messagedigest.h"
-#include "webrtc/base/sslfingerprint.h"
-#include "webrtc/base/stringencode.h"
-#include "webrtc/base/stringutils.h"
 #include "webrtc/media/base/mediaconstants.h"
-#include "webrtc/media/engine/webrtcvideoengine2.h"
+#include "webrtc/media/engine/webrtcvideoengine.h"
 #include "webrtc/modules/video_coding/codecs/h264/include/h264.h"
 #include "webrtc/p2p/base/p2pconstants.h"
 #include "webrtc/pc/mediasession.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/gunit.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/messagedigest.h"
+#include "webrtc/rtc_base/sslfingerprint.h"
+#include "webrtc/rtc_base/stringencode.h"
+#include "webrtc/rtc_base/stringutils.h"
 #ifdef WEBRTC_ANDROID
 #include "webrtc/pc/test/androidtestinitializer.h"
 #endif
@@ -94,6 +94,9 @@ static const char kExtmap[] =
     "a=extmap:1 http://example.com/082005/ext.htm#ttime\r\n";
 static const char kExtmapWithDirectionAndAttribute[] =
     "a=extmap:1/sendrecv http://example.com/082005/ext.htm#ttime a1 a2\r\n";
+static const char kExtmapWithDirectionAndAttributeEncrypted[] =
+    "a=extmap:1/sendrecv urn:ietf:params:rtp-hdrext:encrypt "
+    "http://example.com/082005/ext.htm#ttime a1 a2\r\n";
 
 static const uint8_t kIdentityDigest[] = {
     0x4A, 0xAD, 0xB9, 0xB1, 0x3F, 0x82, 0x18, 0x3B, 0x54, 0x02,
@@ -694,7 +697,7 @@ static const char kSdpTcpInvalidCandidate[] =
 // One candidate reference string with IPV6 address.
 static const char kRawIPV6Candidate[] =
     "candidate:a0+B/1 1 udp 2130706432 "
-    "abcd::abcd::abcd::abcd::abcd::abcd::abcd::abcd 1234 typ host generation 2";
+    "abcd:abcd:abcd:abcd:abcd:abcd:abcd:abcd 1234 typ host generation 2";
 
 // One candidate reference string.
 static const char kSdpOneCandidateWithUfragPwd[] =
@@ -1213,6 +1216,7 @@ class WebRtcSdpTest : public testing::Test {
       const RtpExtension ext2 = cd2->rtp_header_extensions().at(i);
       EXPECT_EQ(ext1.uri, ext2.uri);
       EXPECT_EQ(ext1.id, ext2.id);
+      EXPECT_EQ(ext1.encrypt, ext2.encrypt);
     }
   }
 
@@ -1434,13 +1438,15 @@ class WebRtcSdpTest : public testing::Test {
                              cricket::CONNECTIONROLE_NONE, &fingerprint))));
   }
 
-  void AddExtmap() {
+  void AddExtmap(bool encrypted) {
     audio_desc_ = static_cast<AudioContentDescription*>(
         audio_desc_->Copy());
     video_desc_ = static_cast<VideoContentDescription*>(
         video_desc_->Copy());
-    audio_desc_->AddRtpHeaderExtension(RtpExtension(kExtmapUri, kExtmapId));
-    video_desc_->AddRtpHeaderExtension(RtpExtension(kExtmapUri, kExtmapId));
+    audio_desc_->AddRtpHeaderExtension(
+        RtpExtension(kExtmapUri, kExtmapId, encrypted));
+    video_desc_->AddRtpHeaderExtension(
+        RtpExtension(kExtmapUri, kExtmapId, encrypted));
     desc_.RemoveContentByName(kAudioContentName);
     desc_.RemoveContentByName(kVideoContentName);
     desc_.AddContent(kAudioContentName, NS_JINGLE_RTP, audio_desc_);
@@ -1576,8 +1582,9 @@ class WebRtcSdpTest : public testing::Test {
     return true;
   }
 
-  void TestDeserializeExtmap(bool session_level, bool media_level) {
-    AddExtmap();
+  void TestDeserializeExtmap(bool session_level, bool media_level,
+      bool encrypted) {
+    AddExtmap(encrypted);
     JsepSessionDescription new_jdesc("dummy");
     ASSERT_TRUE(new_jdesc.Initialize(desc_.Copy(),
                                      jdesc_.session_id(),
@@ -1585,13 +1592,19 @@ class WebRtcSdpTest : public testing::Test {
     JsepSessionDescription jdesc_with_extmap("dummy");
     std::string sdp_with_extmap = kSdpString;
     if (session_level) {
-      InjectAfter(kSessionTime, kExtmapWithDirectionAndAttribute,
+      InjectAfter(kSessionTime,
+                  encrypted ? kExtmapWithDirectionAndAttributeEncrypted
+                            : kExtmapWithDirectionAndAttribute,
                   &sdp_with_extmap);
     }
     if (media_level) {
-      InjectAfter(kAttributeIcePwdVoice, kExtmapWithDirectionAndAttribute,
+      InjectAfter(kAttributeIcePwdVoice,
+                  encrypted ? kExtmapWithDirectionAndAttributeEncrypted
+                            : kExtmapWithDirectionAndAttribute,
                   &sdp_with_extmap);
-      InjectAfter(kAttributeIcePwdVideo, kExtmapWithDirectionAndAttribute,
+      InjectAfter(kAttributeIcePwdVideo,
+                  encrypted ? kExtmapWithDirectionAndAttributeEncrypted
+                            : kExtmapWithDirectionAndAttribute,
                   &sdp_with_extmap);
     }
     // The extmap can't be present at the same time in both session level and
@@ -2016,7 +2029,8 @@ TEST_F(WebRtcSdpTest, SerializeSessionDescriptionWithDataChannelAndBandwidth) {
 }
 
 TEST_F(WebRtcSdpTest, SerializeSessionDescriptionWithExtmap) {
-  AddExtmap();
+  bool encrypted = false;
+  AddExtmap(encrypted);
   JsepSessionDescription desc_with_extmap("dummy");
   MakeDescriptionWithoutCandidates(&desc_with_extmap);
   std::string message = webrtc::SdpSerialize(desc_with_extmap, false);
@@ -2028,6 +2042,15 @@ TEST_F(WebRtcSdpTest, SerializeSessionDescriptionWithExtmap) {
               kExtmap, &sdp_with_extmap);
 
   EXPECT_EQ(sdp_with_extmap, message);
+}
+
+TEST_F(WebRtcSdpTest, SerializeSessionDescriptionWithExtmapEncrypted) {
+  bool encrypted = true;
+  AddExtmap(encrypted);
+  JsepSessionDescription desc_with_extmap("dummy");
+  ASSERT_TRUE(desc_with_extmap.Initialize(desc_.Copy(),
+                                          kSessionId, kSessionVersion));
+  TestSerialize(desc_with_extmap, false);
 }
 
 TEST_F(WebRtcSdpTest, SerializeCandidates) {
@@ -2675,17 +2698,31 @@ TEST_F(WebRtcSdpTest, DeserializeSdpWithSctpDataChannelsAndBandwidth) {
   EXPECT_TRUE(CompareSessionDescription(jdesc, jdesc_with_bandwidth));
 }
 
-TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithSessionLevelExtmap) {
-  TestDeserializeExtmap(true, false);
+class WebRtcSdpExtmapTest
+  : public WebRtcSdpTest, public testing::WithParamInterface<bool> {
+};
+
+TEST_P(WebRtcSdpExtmapTest,
+    DeserializeSessionDescriptionWithSessionLevelExtmap) {
+  bool encrypted = GetParam();
+  TestDeserializeExtmap(true, false, encrypted);
 }
 
-TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithMediaLevelExtmap) {
-  TestDeserializeExtmap(false, true);
+TEST_P(WebRtcSdpExtmapTest,
+    DeserializeSessionDescriptionWithMediaLevelExtmap) {
+  bool encrypted = GetParam();
+  TestDeserializeExtmap(false, true, encrypted);
 }
 
-TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithInvalidExtmap) {
-  TestDeserializeExtmap(true, true);
+TEST_P(WebRtcSdpExtmapTest,
+    DeserializeSessionDescriptionWithInvalidExtmap) {
+  bool encrypted = GetParam();
+  TestDeserializeExtmap(true, true, encrypted);
 }
+
+INSTANTIATE_TEST_CASE_P(Encrypted,
+                        WebRtcSdpExtmapTest,
+                        ::testing::Values(false, true));
 
 TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithoutEndLineBreak) {
   JsepSessionDescription jdesc(kDummyString);
@@ -3304,6 +3341,44 @@ TEST_F(WebRtcSdpTest, DeserializeLargeBandwidthLimit) {
       "foo=fail\r\n";
 
   ExpectParseFailure(std::string(kSdpWithLargeBandwidth), "foo=fail");
+}
+
+// Similar to the above, except that negative values are illegal, not just
+// error-prone as large values are.
+// https://bugs.chromium.org/p/chromium/issues/detail?id=675361
+TEST_F(WebRtcSdpTest, DeserializingNegativeBandwidthLimitFails) {
+  static const char kSdpWithNegativeBandwidth[] =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=video 3457 RTP/SAVPF 120\r\n"
+      "b=AS:-1000\r\n";
+
+  ExpectParseFailure(std::string(kSdpWithNegativeBandwidth), "b=AS:-1000");
+}
+
+// An exception to the above rule: a value of -1 for b=AS should just be
+// ignored, resulting in "kAutoBandwidth" in the deserialized object.
+// Applications historically may be using "b=AS:-1" to mean "no bandwidth
+// limit", but this is now what ommitting the attribute entirely will do, so
+// ignoring it will have the intended effect.
+TEST_F(WebRtcSdpTest, BandwidthLimitOfNegativeOneIgnored) {
+  static const char kSdpWithBandwidthOfNegativeOne[] =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=video 3457 RTP/SAVPF 120\r\n"
+      "b=AS:-1\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyString);
+  EXPECT_TRUE(SdpDeserialize(kSdpWithBandwidthOfNegativeOne, &jdesc_output));
+  const ContentInfo* vc = GetFirstVideoContent(jdesc_output.description());
+  ASSERT_NE(nullptr, vc);
+  const VideoContentDescription* vcd =
+      static_cast<const VideoContentDescription*>(vc->description);
+  EXPECT_EQ(cricket::kAutoBandwidth, vcd->bandwidth());
 }
 
 // Test that "ufrag"/"pwd" in the candidate line itself are ignored, and only

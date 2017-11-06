@@ -12,7 +12,7 @@
 
 #include <vector>
 
-#include "webrtc/base/gunit.h"
+#include "webrtc/rtc_base/gunit.h"
 
 #import "NSString+StdString.h"
 #import "RTCConfiguration+Private.h"
@@ -53,10 +53,20 @@
   RTCMediaConstraints *contraints = [[RTCMediaConstraints alloc] initWithMandatoryConstraints:@{}
       optionalConstraints:nil];
   RTCPeerConnectionFactory *factory = [[RTCPeerConnectionFactory alloc] init];
-  RTCPeerConnection *peerConnection = [factory peerConnectionWithConfiguration:config
-      constraints:contraints delegate:nil];
 
-  RTCConfiguration *newConfig = peerConnection.configuration;
+  RTCConfiguration *newConfig;
+  @autoreleasepool {
+    RTCPeerConnection *peerConnection =
+        [factory peerConnectionWithConfiguration:config constraints:contraints delegate:nil];
+    newConfig = peerConnection.configuration;
+
+    EXPECT_TRUE([peerConnection setBitrateToMin:[NSNumber numberWithInt:100000]
+                                      toCurrent:[NSNumber numberWithInt:5000000]
+                                          toMax:[NSNumber numberWithInt:500000000]]);
+    EXPECT_FALSE([peerConnection setBitrateToMin:[NSNumber numberWithInt:2]
+                                       toCurrent:[NSNumber numberWithInt:1]
+                                           toMax:nullptr]);
+  }
 
   EXPECT_EQ([config.iceServers count], [newConfig.iceServers count]);
   RTCIceServer *newServer = newConfig.iceServers[0];

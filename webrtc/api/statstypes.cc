@@ -12,7 +12,7 @@
 
 #include <string.h>
 
-#include "webrtc/base/checks.h"
+#include "webrtc/rtc_base/checks.h"
 
 // TODO(tommi): Could we have a static map of value name -> expected type
 // and use this to RTC_DCHECK on correct usage (somewhat strongly typed values)?
@@ -371,6 +371,8 @@ const char* StatsReport::Value::display_name() const {
       return "audioInputLevel";
     case kStatsValueNameBytesSent:
       return "bytesSent";
+    case kStatsValueNameConcealedSamples:
+      return "concealedSamples";
     case kStatsValueNamePacketsSent:
       return "packetsSent";
     case kStatsValueNameBytesReceived:
@@ -383,6 +385,8 @@ const char* StatsReport::Value::display_name() const {
       return "packetsLost";
     case kStatsValueNameProtocol:
       return "protocol";
+    case kStatsValueNameTotalSamplesReceived:
+      return "totalSamplesReceived";
     case kStatsValueNameTransportId:
       return "transportId";
     case kStatsValueNameSelectedCandidatePairId:
@@ -456,6 +460,8 @@ const char* StatsReport::Value::display_name() const {
       return "googComponent";
     case kStatsValueNameContentName:
       return "googContentName";
+    case kStatsValueNameContentType:
+      return "googContentType";
     case kStatsValueNameCpuLimitedResolution:
       return "googCpuLimitedResolution";
     case kStatsValueNameDecodingCTSG:
@@ -538,6 +544,8 @@ const char* StatsReport::Value::display_name() const {
       return "googFrameWidthSent";
     case kStatsValueNameInitiator:
       return "googInitiator";
+    case kStatsValueNameInterframeDelayMaxMs:
+      return "googInterframeDelayMax";
     case kStatsValueNameIssuerId:
       return "googIssuerId";
     case kStatsValueNameJitterReceived:
@@ -584,6 +592,8 @@ const char* StatsReport::Value::display_name() const {
       return "googRtt";
     case kStatsValueNameSecondaryDecodedRate:
       return "googSecondaryDecodedRate";
+    case kStatsValueNameSecondaryDiscardedRate:
+      return "googSecondaryDiscardedRate";
     case kStatsValueNameSendPacketsDiscarded:
       return "packetsDiscardedOnSend";
     case kStatsValueNameSpeechExpandRate:
@@ -592,12 +602,18 @@ const char* StatsReport::Value::display_name() const {
       return "srtpCipher";
     case kStatsValueNameTargetEncBitrate:
       return "googTargetEncBitrate";
+    case kStatsValueNameTotalAudioEnergy:
+      return "totalAudioEnergy";
+    case kStatsValueNameTotalSamplesDuration:
+      return "totalSamplesDuration";
     case kStatsValueNameTransmitBitrate:
       return "googTransmitBitrate";
     case kStatsValueNameTransportType:
       return "googTransportType";
     case kStatsValueNameTrackId:
       return "googTrackId";
+    case kStatsValueNameTimingFrameInfo:
+      return "googTimingFrameInfo";
     case kStatsValueNameTypingNoiseState:
       return "googTypingNoiseState";
     case kStatsValueNameWritable:

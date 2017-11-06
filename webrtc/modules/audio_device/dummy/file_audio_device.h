@@ -16,9 +16,9 @@
 #include <memory>
 #include <string>
 
-#include "webrtc/base/criticalsection.h"
-#include "webrtc/base/timeutils.h"
 #include "webrtc/modules/audio_device/audio_device_generic.h"
+#include "webrtc/rtc_base/criticalsection.h"
+#include "webrtc/rtc_base/timeutils.h"
 #include "webrtc/system_wrappers/include/file_wrapper.h"
 
 namespace rtc {
@@ -89,11 +89,6 @@ class FileAudioDevice : public AudioDeviceGeneric {
   // Microphone Automatic Gain Control (AGC)
   int32_t SetAGC(bool enable) override;
   bool AGC() const override;
-
-  // Volume control based on the Windows Wave API (Windows only)
-  int32_t SetWaveOutVolume(uint16_t volumeLeft, uint16_t volumeRight) override;
-  int32_t WaveOutVolume(uint16_t& volumeLeft,
-                        uint16_t& volumeRight) const override;
 
   // Audio mixer initialization
   int32_t InitSpeaker() override;

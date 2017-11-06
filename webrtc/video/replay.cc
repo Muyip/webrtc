@@ -16,13 +16,14 @@
 
 #include "gflags/gflags.h"
 #include "webrtc/api/video_codecs/video_decoder.h"
-#include "webrtc/base/checks.h"
 #include "webrtc/call/call.h"
 #include "webrtc/common_video/libyuv/include/webrtc_libyuv.h"
 #include "webrtc/logging/rtc_event_log/rtc_event_log.h"
 #include "webrtc/modules/rtp_rtcp/include/rtp_header_parser.h"
+#include "webrtc/rtc_base/checks.h"
 #include "webrtc/system_wrappers/include/clock.h"
 #include "webrtc/system_wrappers/include/sleep.h"
+#include "webrtc/test/call_test.h"
 #include "webrtc/test/encoder_settings.h"
 #include "webrtc/test/fake_decoder.h"
 #include "webrtc/test/gtest.h"
@@ -30,6 +31,7 @@
 #include "webrtc/test/rtp_file_reader.h"
 #include "webrtc/test/run_loop.h"
 #include "webrtc/test/run_test.h"
+#include "webrtc/test/testsupport/frame_writer.h"
 #include "webrtc/test/video_capturer.h"
 #include "webrtc/test/video_renderer.h"
 #include "webrtc/typedefs.h"
@@ -43,20 +45,37 @@ namespace flags {
 static bool ValidatePayloadType(const char* flagname, int32_t payload_type) {
   return payload_type > 0 && payload_type <= 127;
 }
-DEFINE_int32(payload_type, 0, "Payload type");
+DEFINE_int32(payload_type, test::CallTest::kPayloadTypeVP8, "Payload type");
 static int PayloadType() { return static_cast<int>(FLAGS_payload_type); }
 static const bool payload_dummy =
     google::RegisterFlagValidator(&FLAGS_payload_type, &ValidatePayloadType);
+
+DEFINE_int32(payload_type_rtx,
+             test::CallTest::kSendRtxPayloadType,
+             "RTX payload type");
+static int PayloadTypeRtx() {
+  return static_cast<int>(FLAGS_payload_type_rtx);
+}
+static const bool payload_rtx_dummy =
+    google::RegisterFlagValidator(&FLAGS_payload_type_rtx,
+                                  &ValidatePayloadType);
 
 // Flag for SSRC.
 static bool ValidateSsrc(const char* flagname, uint64_t ssrc) {
   return ssrc > 0 && ssrc <= 0xFFFFFFFFu;
 }
 
-DEFINE_uint64(ssrc, 0, "Incoming SSRC");
+DEFINE_uint64(ssrc, test::CallTest::kVideoSendSsrcs[0], "Incoming SSRC");
 static uint32_t Ssrc() { return static_cast<uint32_t>(FLAGS_ssrc); }
 static const bool ssrc_dummy =
     google::RegisterFlagValidator(&FLAGS_ssrc, &ValidateSsrc);
+
+DEFINE_uint64(ssrc_rtx, test::CallTest::kSendRtxSsrcs[0], "Incoming RTX SSRC");
+static uint32_t SsrcRtx() {
+  return static_cast<uint32_t>(FLAGS_ssrc_rtx);
+}
+static const bool ssrc_rtx_dummy =
+    google::RegisterFlagValidator(&FLAGS_ssrc_rtx, &ValidateSsrc);
 
 static bool ValidateOptionalPayloadType(const char* flagname,
                                         int32_t payload_type) {
@@ -118,7 +137,7 @@ static const bool input_file_dummy =
                                   &ValidateInputFilenameNotEmpty);
 
 // Flag for raw output files.
-DEFINE_string(out_base, "", "Basename (excluding .yuv) for raw output");
+DEFINE_string(out_base, "", "Basename (excluding .jpg) for raw output");
 static std::string OutBase() {
   return static_cast<std::string>(FLAGS_out_base);
 }
@@ -140,12 +159,7 @@ class FileRenderPassthrough : public rtc::VideoSinkInterface<VideoFrame> {
  public:
   FileRenderPassthrough(const std::string& basename,
                         rtc::VideoSinkInterface<VideoFrame>* renderer)
-      : basename_(basename),
-        renderer_(renderer),
-        file_(nullptr),
-        count_(0),
-        last_width_(0),
-        last_height_(0) {}
+      : basename_(basename), renderer_(renderer), file_(nullptr), count_(0) {}
 
   ~FileRenderPassthrough() {
     if (file_)
@@ -156,38 +170,22 @@ class FileRenderPassthrough : public rtc::VideoSinkInterface<VideoFrame> {
   void OnFrame(const VideoFrame& video_frame) override {
     if (renderer_)
       renderer_->OnFrame(video_frame);
+
     if (basename_.empty())
       return;
-    if (last_width_ != video_frame.width() ||
-        last_height_ != video_frame.height()) {
-      if (file_)
-        fclose(file_);
-      std::stringstream filename;
-      filename << basename_;
-      if (++count_ > 1)
-        filename << '-' << count_;
-      filename << '_' << video_frame.width() << 'x' << video_frame.height()
-               << ".yuv";
-      file_ = fopen(filename.str().c_str(), "wb");
-      if (!file_) {
-        fprintf(stderr,
-                "Couldn't open file for writing: %s\n",
-                filename.str().c_str());
-      }
-    }
-    last_width_ = video_frame.width();
-    last_height_ = video_frame.height();
-    if (!file_)
-      return;
-    PrintVideoFrame(video_frame, file_);
+
+    std::stringstream filename;
+    filename << basename_ << count_++ << "_" << video_frame.timestamp()
+             << ".jpg";
+
+    test::JpegFrameWriter frame_writer(filename.str());
+    RTC_CHECK(frame_writer.WriteFrame(video_frame, 100));
   }
 
   const std::string basename_;
   rtc::VideoSinkInterface<VideoFrame>* const renderer_;
   FILE* file_;
   size_t count_;
-  int last_width_;
-  int last_height_;
 };
 
 class DecoderBitstreamFileWriter : public EncodedFrameObserver {
@@ -219,6 +217,9 @@ void RtpReplay() {
   VideoReceiveStream::Config receive_config(&transport);
   receive_config.rtp.remote_ssrc = flags::Ssrc();
   receive_config.rtp.local_ssrc = kReceiverLocalSsrc;
+  receive_config.rtp.rtx_ssrc = flags::SsrcRtx();
+  receive_config.rtp.rtx_associated_payload_types[flags::PayloadTypeRtx()] =
+      flags::PayloadType();
   receive_config.rtp.ulpfec.ulpfec_payload_type = flags::FecPayloadType();
   receive_config.rtp.ulpfec.red_payload_type = flags::RedPayloadType();
   receive_config.rtp.nack.rtp_history_ms = 1000;
@@ -301,9 +302,9 @@ void RtpReplay() {
         RTPHeader header;
         std::unique_ptr<RtpHeaderParser> parser(RtpHeaderParser::Create());
         parser->Parse(packet.data, packet.length, &header);
-        fprintf(stderr, "Packet len=%ld pt=%u seq=%u ts=%u ssrc=0x%8x\n",
-            packet.length, header.payloadType, header.sequenceNumber,
-            header.timestamp, header.ssrc);
+        fprintf(stderr, "Packet len=%zu pt=%u seq=%u ts=%u ssrc=0x%8x\n",
+                packet.length, header.payloadType, header.sequenceNumber,
+                header.timestamp, header.ssrc);
         break;
       }
     }

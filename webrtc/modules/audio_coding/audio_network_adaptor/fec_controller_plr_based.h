@@ -13,10 +13,10 @@
 
 #include <memory>
 
-#include "webrtc/base/constructormagic.h"
 #include "webrtc/common_audio/smoothing_filter.h"
 #include "webrtc/modules/audio_coding/audio_network_adaptor/controller.h"
 #include "webrtc/modules/audio_coding/audio_network_adaptor/util/threshold_curve.h"
+#include "webrtc/rtc_base/constructormagic.h"
 
 namespace webrtc {
 
@@ -36,13 +36,11 @@ class FecControllerPlrBased final : public Controller {
     Config(bool initial_fec_enabled,
            const ThresholdCurve& fec_enabling_threshold,
            const ThresholdCurve& fec_disabling_threshold,
-           int time_constant_ms,
-           const Clock* clock);
+           int time_constant_ms);
     bool initial_fec_enabled;
     ThresholdCurve fec_enabling_threshold;
     ThresholdCurve fec_disabling_threshold;
     int time_constant_ms;
-    const Clock* clock;
   };
 
   // Dependency injection for testing.

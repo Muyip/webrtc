@@ -16,12 +16,8 @@
 #include <string>
 #include <vector>
 
+#include "webrtc/api/audio_codecs/audio_encoder_factory.h"
 #include "webrtc/api/rtpreceiverinterface.h"
-#include "webrtc/base/buffer.h"
-#include "webrtc/base/constructormagic.h"
-#include "webrtc/base/networkroute.h"
-#include "webrtc/base/scoped_ref_ptr.h"
-#include "webrtc/base/thread_checker.h"
 #include "webrtc/call/audio_state.h"
 #include "webrtc/call/call.h"
 #include "webrtc/config.h"
@@ -31,6 +27,12 @@
 #include "webrtc/media/engine/webrtcvoe.h"
 #include "webrtc/modules/audio_processing/include/audio_processing.h"
 #include "webrtc/pc/channel.h"
+#include "webrtc/rtc_base/buffer.h"
+#include "webrtc/rtc_base/constructormagic.h"
+#include "webrtc/rtc_base/networkroute.h"
+#include "webrtc/rtc_base/scoped_ref_ptr.h"
+#include "webrtc/rtc_base/task_queue.h"
+#include "webrtc/rtc_base/thread_checker.h"
 
 namespace webrtc {
 namespace voe {
@@ -51,20 +53,24 @@ class WebRtcVoiceMediaChannel;
 class WebRtcVoiceEngine final : public webrtc::TraceCallback  {
   friend class WebRtcVoiceMediaChannel;
  public:
-  // Exposed for the WVoE/MC unit test.
-  static bool ToCodecInst(const AudioCodec& in, webrtc::CodecInst* out);
-
   WebRtcVoiceEngine(
       webrtc::AudioDeviceModule* adm,
+      const rtc::scoped_refptr<webrtc::AudioEncoderFactory>& encoder_factory,
       const rtc::scoped_refptr<webrtc::AudioDecoderFactory>& decoder_factory,
-      rtc::scoped_refptr<webrtc::AudioMixer> audio_mixer);
+      rtc::scoped_refptr<webrtc::AudioMixer> audio_mixer,
+      rtc::scoped_refptr<webrtc::AudioProcessing> audio_processing);
   // Dependency injection for testing.
   WebRtcVoiceEngine(
       webrtc::AudioDeviceModule* adm,
+      const rtc::scoped_refptr<webrtc::AudioEncoderFactory>& encoder_factory,
       const rtc::scoped_refptr<webrtc::AudioDecoderFactory>& decoder_factory,
       rtc::scoped_refptr<webrtc::AudioMixer> audio_mixer,
+      rtc::scoped_refptr<webrtc::AudioProcessing> audio_processing,
       VoEWrapper* voe_wrapper);
   ~WebRtcVoiceEngine() override;
+
+  // Does initialization that needs to occur on the worker thread.
+  void Init();
 
   rtc::scoped_refptr<webrtc::AudioState> GetAudioState() const;
   VoiceMediaChannel* CreateChannel(webrtc::Call* call,
@@ -95,8 +101,8 @@ class WebRtcVoiceEngine final : public webrtc::TraceCallback  {
   // Stops AEC dump.
   void StopAecDump();
 
-  const webrtc::AudioProcessing::Config& GetApmConfigForTest() const {
-    return apm_config_;
+  const webrtc::AudioProcessing::Config GetApmConfigForTest() const {
+    return apm()->GetConfig();
   }
 
  private:
@@ -110,20 +116,26 @@ class WebRtcVoiceEngine final : public webrtc::TraceCallback  {
 
   void StartAecDump(const std::string& filename);
   int CreateVoEChannel();
+
+  std::unique_ptr<rtc::TaskQueue> low_priority_worker_queue_;
+
   webrtc::AudioDeviceModule* adm();
-  webrtc::AudioProcessing* apm();
+  webrtc::AudioProcessing* apm() const;
   webrtc::voe::TransmitMixer* transmit_mixer();
 
-  AudioCodecs CollectRecvCodecs() const;
+  AudioCodecs CollectCodecs(
+      const std::vector<webrtc::AudioCodecSpec>& specs) const;
 
   rtc::ThreadChecker signal_thread_checker_;
   rtc::ThreadChecker worker_thread_checker_;
 
   // The audio device manager.
   rtc::scoped_refptr<webrtc::AudioDeviceModule> adm_;
+  rtc::scoped_refptr<webrtc::AudioEncoderFactory> encoder_factory_;
   rtc::scoped_refptr<webrtc::AudioDecoderFactory> decoder_factory_;
+  rtc::scoped_refptr<webrtc::AudioMixer> audio_mixer_;
   // Reference to the APM, owned by VoE.
-  webrtc::AudioProcessing* apm_ = nullptr;
+  rtc::scoped_refptr<webrtc::AudioProcessing> apm_;
   // Reference to the TransmitMixer, owned by VoE.
   webrtc::voe::TransmitMixer* transmit_mixer_ = nullptr;
   // The primary instance of WebRtc VoiceEngine.
@@ -134,6 +146,7 @@ class WebRtcVoiceEngine final : public webrtc::TraceCallback  {
   std::vector<WebRtcVoiceMediaChannel*> channels_;
   webrtc::VoEBase::ChannelConfig channel_config_;
   bool is_dumping_aec_ = false;
+  bool initialized_ = false;
 
   webrtc::AgcConfig default_agc_config_;
   // Cache received extended_filter_aec, delay_agnostic_aec, experimental_ns
@@ -146,8 +159,6 @@ class WebRtcVoiceEngine final : public webrtc::TraceCallback  {
   rtc::Optional<bool> experimental_ns_;
   rtc::Optional<bool> intelligibility_enhancer_;
   rtc::Optional<bool> level_control_;
-
-  webrtc::AudioProcessing::Config apm_config_;
 
   RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(WebRtcVoiceEngine);
 };
@@ -211,7 +222,7 @@ class WebRtcVoiceMediaChannel final : public VoiceMediaChannel,
       uint32_t ssrc,
       std::unique_ptr<webrtc::AudioSinkInterface> sink) override;
 
-  std::vector<webrtc::RtpSource> GetSources(uint32_t ssrc) const;
+  std::vector<webrtc::RtpSource> GetSources(uint32_t ssrc) const override;
 
   // implements Transport interface
   bool SendRtp(const uint8_t* data,
@@ -291,7 +302,8 @@ class WebRtcVoiceMediaChannel final : public VoiceMediaChannel,
   std::map<uint32_t, WebRtcAudioReceiveStream*> recv_streams_;
   std::vector<webrtc::RtpExtension> recv_rtp_extensions_;
 
-  webrtc::AudioSendStream::Config::SendCodecSpec send_codec_spec_;
+  rtc::Optional<webrtc::AudioSendStream::Config::SendCodecSpec>
+      send_codec_spec_;
 
   RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(WebRtcVoiceMediaChannel);
 };

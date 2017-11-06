@@ -28,7 +28,7 @@ import java.util.concurrent.CountDownLatch;
  * Interaction with the layout framework in onMeasure and onSizeChanged.
  */
 public class SurfaceViewRenderer
-    extends SurfaceView implements SurfaceHolder.Callback, VideoRenderer.Callbacks {
+    extends SurfaceView implements SurfaceHolder.Callback, VideoRenderer.Callbacks, VideoSink {
   private static final String TAG = "SurfaceViewRenderer";
 
   // Cached resource name.
@@ -41,6 +41,7 @@ public class SurfaceViewRenderer
   private RendererCommon.RendererEvents rendererEvents;
 
   private final Object layoutLock = new Object();
+  private boolean isRenderingPaused = false;
   private boolean isFirstFrameRendered;
   private int rotatedFrameWidth;
   private int rotatedFrameHeight;
@@ -91,6 +92,7 @@ public class SurfaceViewRenderer
     ThreadUtils.checkIsOnMainThread();
     this.rendererEvents = rendererEvents;
     synchronized (layoutLock) {
+      isFirstFrameRendered = false;
       rotatedFrameWidth = 0;
       rotatedFrameHeight = 0;
       frameRotation = 0;
@@ -162,12 +164,14 @@ public class SurfaceViewRenderer
   public void setScalingType(RendererCommon.ScalingType scalingType) {
     ThreadUtils.checkIsOnMainThread();
     videoLayoutMeasure.setScalingType(scalingType);
+    requestLayout();
   }
 
   public void setScalingType(RendererCommon.ScalingType scalingTypeMatchOrientation,
       RendererCommon.ScalingType scalingTypeMismatchOrientation) {
     ThreadUtils.checkIsOnMainThread();
     videoLayoutMeasure.setScalingType(scalingTypeMatchOrientation, scalingTypeMismatchOrientation);
+    requestLayout();
   }
 
   /**
@@ -177,14 +181,23 @@ public class SurfaceViewRenderer
    *            reduction.
    */
   public void setFpsReduction(float fps) {
+    synchronized (layoutLock) {
+      isRenderingPaused = fps == 0f;
+    }
     eglRenderer.setFpsReduction(fps);
   }
 
   public void disableFpsReduction() {
+    synchronized (layoutLock) {
+      isRenderingPaused = false;
+    }
     eglRenderer.disableFpsReduction();
   }
 
   public void pauseVideo() {
+    synchronized (layoutLock) {
+      isRenderingPaused = true;
+    }
     eglRenderer.pauseVideo();
   }
 
@@ -193,6 +206,13 @@ public class SurfaceViewRenderer
   public void renderFrame(VideoRenderer.I420Frame frame) {
     updateFrameDimensionsAndReportEvents(frame);
     eglRenderer.renderFrame(frame);
+  }
+
+  // VideoSink interface.
+  @Override
+  public void onFrame(VideoFrame frame) {
+    updateFrameDimensionsAndReportEvents(frame);
+    eglRenderer.onFrame(frame);
   }
 
   // View layout interface.
@@ -295,6 +315,9 @@ public class SurfaceViewRenderer
   // Update frame dimensions and report any changes to |rendererEvents|.
   private void updateFrameDimensionsAndReportEvents(VideoRenderer.I420Frame frame) {
     synchronized (layoutLock) {
+      if (isRenderingPaused) {
+        return;
+      }
       if (!isFirstFrameRendered) {
         isFirstFrameRendered = true;
         logD("Reporting first rendered frame.");
@@ -318,6 +341,39 @@ public class SurfaceViewRenderer
             updateSurfaceSize();
             requestLayout();
           }
+        });
+      }
+    }
+  }
+
+  // Update frame dimensions and report any changes to |rendererEvents|.
+  private void updateFrameDimensionsAndReportEvents(VideoFrame frame) {
+    synchronized (layoutLock) {
+      if (isRenderingPaused) {
+        return;
+      }
+      if (!isFirstFrameRendered) {
+        isFirstFrameRendered = true;
+        logD("Reporting first rendered frame.");
+        if (rendererEvents != null) {
+          rendererEvents.onFirstFrameRendered();
+        }
+      }
+      if (rotatedFrameWidth != frame.getRotatedWidth()
+          || rotatedFrameHeight != frame.getRotatedHeight()
+          || frameRotation != frame.getRotation()) {
+        logD("Reporting frame resolution changed to " + frame.getBuffer().getWidth() + "x"
+            + frame.getBuffer().getHeight() + " with rotation " + frame.getRotation());
+        if (rendererEvents != null) {
+          rendererEvents.onFrameResolutionChanged(
+              frame.getBuffer().getWidth(), frame.getBuffer().getHeight(), frame.getRotation());
+        }
+        rotatedFrameWidth = frame.getRotatedWidth();
+        rotatedFrameHeight = frame.getRotatedHeight();
+        frameRotation = frame.getRotation();
+        post(() -> {
+          updateSurfaceSize();
+          requestLayout();
         });
       }
     }

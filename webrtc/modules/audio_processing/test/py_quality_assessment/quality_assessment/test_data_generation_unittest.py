@@ -14,6 +14,9 @@ import shutil
 import tempfile
 import unittest
 
+import numpy as np
+import scipy.io
+
 from . import test_data_generation
 from . import test_data_generation_factory
 from . import signal_processing
@@ -26,17 +29,52 @@ class TestTestDataGenerators(unittest.TestCase):
   def setUp(self):
     """Create temporary folders."""
     self._base_output_path = tempfile.mkdtemp()
-    self._input_noise_cache_path = tempfile.mkdtemp()
+    self._test_data_cache_path = tempfile.mkdtemp()
+    self._fake_air_db_path = tempfile.mkdtemp()
+
+    # Fake AIR DB impulse responses.
+    # TODO(alessiob): ReverberationTestDataGenerator will change to allow custom
+    # impulse responses. When changed, the coupling below between
+    # impulse_response_mat_file_names and
+    # ReverberationTestDataGenerator._IMPULSE_RESPONSES can be removed.
+    impulse_response_mat_file_names = [
+        'air_binaural_lecture_0_0_1.mat',
+        'air_binaural_booth_0_0_1.mat',
+    ]
+    for impulse_response_mat_file_name in impulse_response_mat_file_names:
+      data = {'h_air': np.random.rand(1, 1000).astype('<f8')}
+      scipy.io.savemat(os.path.join(
+          self._fake_air_db_path, impulse_response_mat_file_name), data)
 
   def tearDown(self):
     """Recursively delete temporary folders."""
     shutil.rmtree(self._base_output_path)
-    shutil.rmtree(self._input_noise_cache_path)
+    shutil.rmtree(self._test_data_cache_path)
+    shutil.rmtree(self._fake_air_db_path)
+
+  def testInputSignalCreation(self):
+    # Init.
+    generator = test_data_generation.IdentityTestDataGenerator('tmp')
+    input_signal_filepath = os.path.join(
+        self._test_data_cache_path, 'pure_tone-440_1000.wav')
+
+    # Check that the input signal is generated.
+    self.assertFalse(os.path.exists(input_signal_filepath))
+    generator.Generate(
+        input_signal_filepath=input_signal_filepath,
+        test_data_cache_path=self._test_data_cache_path,
+        base_output_path=self._base_output_path)
+    self.assertTrue(os.path.exists(input_signal_filepath))
+
+    # Check input signal properties.
+    input_signal = signal_processing.SignalProcessingUtils.LoadWav(
+        input_signal_filepath)
+    self.assertEqual(1000, len(input_signal))
 
   def testTestDataGenerators(self):
     # Preliminary check.
     self.assertTrue(os.path.exists(self._base_output_path))
-    self.assertTrue(os.path.exists(self._input_noise_cache_path))
+    self.assertTrue(os.path.exists(self._test_data_cache_path))
 
     # Check that there is at least one registered test data generator.
     registered_classes = (
@@ -47,11 +85,8 @@ class TestTestDataGenerators(unittest.TestCase):
     # Instance generators factory.
     generators_factory = (
         test_data_generation_factory.TestDataGeneratorFactory(
-            aechen_ir_database_path=''))
-    # TODO(alessiob): Replace with a mock of TestDataGeneratorFactory that
-    # takes no arguments in the ctor. For those generators that need parameters,
-    # it will return a mock generator (see the first comment in the next for
-    # loop).
+            output_directory_prefix='datagen-',
+            aechen_ir_database_path=self._fake_air_db_path))
 
     # Use a sample input file as clean input signal.
     input_signal_filepath = os.path.join(
@@ -64,16 +99,6 @@ class TestTestDataGenerators(unittest.TestCase):
 
     # Try each registered test data generator.
     for generator_name in registered_classes:
-      # Exclude ReverberationTestDataGenerator.
-      # TODO(alessiob): Mock ReverberationTestDataGenerator, the mock
-      # should rely on hard-coded impulse responses. This requires a mock for
-      # TestDataGeneratorFactory. The latter knows whether returning the
-      # actual generator or a mock object (as in the case of
-      # ReverberationTestDataGenerator).
-      if generator_name == (
-          test_data_generation.ReverberationTestDataGenerator.NAME):
-        continue
-
       # Instance test data generator.
       generator = generators_factory.GetInstance(
           registered_classes[generator_name])
@@ -81,7 +106,7 @@ class TestTestDataGenerators(unittest.TestCase):
       # Generate the noisy input - reference pairs.
       generator.Generate(
           input_signal_filepath=input_signal_filepath,
-          input_noise_cache_path=self._input_noise_cache_path,
+          test_data_cache_path=self._test_data_cache_path,
           base_output_path=self._base_output_path)
 
       # Perform checks.

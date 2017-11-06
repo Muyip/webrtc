@@ -32,7 +32,8 @@ VCMPacket::VCMPacket()
       insertStartCode(false),
       width(0),
       height(0),
-      video_header() {
+      video_header(),
+      receive_time_ms(0) {
   video_header.playout_delay = {-1, -1};
 }
 
@@ -133,6 +134,8 @@ void VCMPacket::CopyCodecSpecifics(const RTPVideoHeader& videoHeader) {
       codec = kVideoCodecH264;
       return;
     case kRtpVideoGeneric:
+      codec = kVideoCodecGeneric;
+      return;
     case kRtpVideoNone:
       codec = kVideoCodecUnknown;
       return;

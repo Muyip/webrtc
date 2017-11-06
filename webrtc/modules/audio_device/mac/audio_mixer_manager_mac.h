@@ -11,9 +11,9 @@
 #ifndef WEBRTC_AUDIO_DEVICE_AUDIO_MIXER_MANAGER_MAC_H
 #define WEBRTC_AUDIO_DEVICE_AUDIO_MIXER_MANAGER_MAC_H
 
-#include "webrtc/base/criticalsection.h"
 #include "webrtc/modules/audio_device/include/audio_device.h"
-#include "webrtc/system_wrappers/include/trace.h"
+#include "webrtc/rtc_base/criticalsection.h"
+#include "webrtc/rtc_base/logging.h"
 #include "webrtc/typedefs.h"
 
 #include <CoreAudio/CoreAudio.h>
@@ -54,19 +54,16 @@ class AudioMixerManagerMac {
   bool MicrophoneIsInitialized() const;
 
  public:
-  AudioMixerManagerMac(const int32_t id);
+  AudioMixerManagerMac();
   ~AudioMixerManagerMac();
 
  private:
-  static void logCAMsg(const TraceLevel level,
-                       const TraceModule module,
-                       const int32_t id,
+  static void logCAMsg(const rtc::LoggingSeverity sev,
                        const char* msg,
                        const char* err);
 
  private:
   rtc::CriticalSection _critSect;
-  int32_t _id;
 
   AudioDeviceID _inputDeviceID;
   AudioDeviceID _outputDeviceID;

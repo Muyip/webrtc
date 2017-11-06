@@ -12,10 +12,10 @@
 
 #include <vector>
 
-#include "webrtc/base/array_view.h"
-#include "webrtc/base/basictypes.h"
-#include "webrtc/base/copyonwritebuffer.h"
 #include "webrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h"
+#include "webrtc/rtc_base/array_view.h"
+#include "webrtc/rtc_base/basictypes.h"
+#include "webrtc/rtc_base/copyonwritebuffer.h"
 
 namespace webrtc {
 struct RTPHeader;
@@ -125,7 +125,7 @@ class Packet {
   // provided via constructor or IdentifyExtensions function.
   Packet();
   explicit Packet(const ExtensionManager* extensions);
-  Packet(const Packet&) = default;
+  Packet(const Packet&);
   Packet(const ExtensionManager* extensions, size_t capacity);
   virtual ~Packet();
 
@@ -183,7 +183,10 @@ bool Packet::GetExtension(Values... values) const {
 
 template <typename Extension, typename... Values>
 bool Packet::SetExtension(Values... values) {
-  auto buffer = AllocateExtension(Extension::kId, Extension::kValueSizeBytes);
+  const size_t value_size = Extension::ValueSize(values...);
+  if (value_size == 0 || value_size > 16)
+    return false;
+  auto buffer = AllocateExtension(Extension::kId, value_size);
   if (buffer.empty())
     return false;
   return Extension::Write(buffer.data(), values...);

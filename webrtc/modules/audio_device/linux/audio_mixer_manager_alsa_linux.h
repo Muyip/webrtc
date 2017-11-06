@@ -11,9 +11,9 @@
 #ifndef WEBRTC_AUDIO_DEVICE_AUDIO_MIXER_MANAGER_ALSA_LINUX_H
 #define WEBRTC_AUDIO_DEVICE_AUDIO_MIXER_MANAGER_ALSA_LINUX_H
 
-#include "webrtc/base/criticalsection.h"
 #include "webrtc/modules/audio_device/include/audio_device.h"
 #include "webrtc/modules/audio_device/linux/alsasymboltable_linux.h"
+#include "webrtc/rtc_base/criticalsection.h"
 #include "webrtc/typedefs.h"
 
 #include <alsa/asoundlib.h>
@@ -54,7 +54,7 @@ public:
     bool MicrophoneIsInitialized() const;
 
 public:
-    AudioMixerManagerLinuxALSA(const int32_t id);
+    AudioMixerManagerLinuxALSA();
     ~AudioMixerManagerLinuxALSA();
 
 private:
@@ -64,7 +64,6 @@ private:
 
 private:
     rtc::CriticalSection _critSect;
-    int32_t _id;
     mutable snd_mixer_t* _outputMixerHandle;
     char _outputMixerStr[kAdmMaxDeviceNameSize];
     mutable snd_mixer_t* _inputMixerHandle;

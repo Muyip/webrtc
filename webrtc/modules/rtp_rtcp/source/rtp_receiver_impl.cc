@@ -18,11 +18,11 @@
 #include <set>
 #include <vector>
 
-#include "webrtc/base/logging.h"
 #include "webrtc/common_types.h"
 #include "webrtc/modules/rtp_rtcp/include/rtp_payload_registry.h"
 #include "webrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h"
 #include "webrtc/modules/rtp_rtcp/source/rtp_receiver_strategy.h"
+#include "webrtc/rtc_base/logging.h"
 
 namespace webrtc {
 
@@ -36,8 +36,7 @@ RtpReceiver* RtpReceiver::CreateVideoReceiver(
     RtpData* incoming_payload_callback,
     RtpFeedback* incoming_messages_callback,
     RTPPayloadRegistry* rtp_payload_registry) {
-  if (!incoming_payload_callback)
-    incoming_payload_callback = NullObjectRtpData();
+  RTC_DCHECK(incoming_payload_callback != nullptr);
   if (!incoming_messages_callback)
     incoming_messages_callback = NullObjectRtpFeedback();
   return new RtpReceiverImpl(
@@ -50,8 +49,7 @@ RtpReceiver* RtpReceiver::CreateAudioReceiver(
     RtpData* incoming_payload_callback,
     RtpFeedback* incoming_messages_callback,
     RTPPayloadRegistry* rtp_payload_registry) {
-  if (!incoming_payload_callback)
-    incoming_payload_callback = NullObjectRtpData();
+  RTC_DCHECK(incoming_payload_callback != nullptr);
   if (!incoming_messages_callback)
     incoming_messages_callback = NullObjectRtpFeedback();
   return new RtpReceiverImpl(
@@ -165,7 +163,11 @@ bool RtpReceiverImpl::IncomingRtpPacket(
   webrtc_rtp_header.header = rtp_header;
   CheckCSRC(webrtc_rtp_header);
 
-  UpdateSources();
+  auto audio_level =
+      rtp_header.extension.hasAudioLevel
+          ? rtc::Optional<uint8_t>(rtp_header.extension.audioLevel)
+          : rtc::Optional<uint8_t>();
+  UpdateSources(audio_level);
 
   size_t payload_data_length = payload_length - rtp_header.paddingLength;
 
@@ -211,41 +213,36 @@ TelephoneEventHandler* RtpReceiverImpl::GetTelephoneEventHandler() {
 }
 
 std::vector<RtpSource> RtpReceiverImpl::GetSources() const {
+  rtc::CritScope lock(&critical_section_rtp_receiver_);
+
   int64_t now_ms = clock_->TimeInMilliseconds();
   std::vector<RtpSource> sources;
 
-  {
-    rtc::CritScope lock(&critical_section_rtp_receiver_);
+  RTC_DCHECK(std::is_sorted(ssrc_sources_.begin(), ssrc_sources_.end(),
+                            [](const RtpSource& lhs, const RtpSource& rhs) {
+                              return lhs.timestamp_ms() < rhs.timestamp_ms();
+                            }));
+  RTC_DCHECK(std::is_sorted(csrc_sources_.begin(), csrc_sources_.end(),
+                            [](const RtpSource& lhs, const RtpSource& rhs) {
+                              return lhs.timestamp_ms() < rhs.timestamp_ms();
+                            }));
 
-    RTC_DCHECK(std::is_sorted(ssrc_sources_.begin(), ssrc_sources_.end(),
-                              [](const RtpSource& lhs, const RtpSource& rhs) {
-                                return lhs.timestamp_ms() < rhs.timestamp_ms();
-                              }));
-    RTC_DCHECK(std::is_sorted(csrc_sources_.begin(), csrc_sources_.end(),
-                              [](const RtpSource& lhs, const RtpSource& rhs) {
-                                return lhs.timestamp_ms() < rhs.timestamp_ms();
-                              }));
-
-    std::set<uint32_t> selected_ssrcs;
-    for (auto rit = ssrc_sources_.rbegin(); rit != ssrc_sources_.rend();
-         ++rit) {
-      if ((now_ms - rit->timestamp_ms()) > kGetSourcesTimeoutMs) {
-        break;
-      }
-      if (selected_ssrcs.insert(rit->source_id()).second) {
-        sources.push_back(*rit);
-      }
+  std::set<uint32_t> selected_ssrcs;
+  for (auto rit = ssrc_sources_.rbegin(); rit != ssrc_sources_.rend(); ++rit) {
+    if ((now_ms - rit->timestamp_ms()) > kGetSourcesTimeoutMs) {
+      break;
     }
-
-    for (auto rit = csrc_sources_.rbegin(); rit != csrc_sources_.rend();
-         ++rit) {
-      if ((now_ms - rit->timestamp_ms()) > kGetSourcesTimeoutMs) {
-        break;
-      }
+    if (selected_ssrcs.insert(rit->source_id()).second) {
       sources.push_back(*rit);
     }
-  }  // End critsect.
+  }
 
+  for (auto rit = csrc_sources_.rbegin(); rit != csrc_sources_.rend(); ++rit) {
+    if ((now_ms - rit->timestamp_ms()) > kGetSourcesTimeoutMs) {
+      break;
+    }
+    sources.push_back(*rit);
+  }
   return sources;
 }
 
@@ -507,7 +504,8 @@ void RtpReceiverImpl::CheckCSRC(const WebRtcRTPHeader& rtp_header) {
   }
 }
 
-void RtpReceiverImpl::UpdateSources() {
+void RtpReceiverImpl::UpdateSources(
+    const rtc::Optional<uint8_t>& ssrc_audio_level) {
   rtc::CritScope lock(&critical_section_rtp_receiver_);
   int64_t now_ms = clock_->TimeInMilliseconds();
 
@@ -533,6 +531,8 @@ void RtpReceiverImpl::UpdateSources() {
   } else {
     ssrc_sources_.rbegin()->update_timestamp_ms(now_ms);
   }
+
+  ssrc_sources_.back().set_audio_level(ssrc_audio_level);
 
   RemoveOutdatedSources(now_ms);
 }

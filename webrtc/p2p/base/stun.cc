@@ -14,13 +14,13 @@
 
 #include <memory>
 
-#include "webrtc/base/byteorder.h"
-#include "webrtc/base/checks.h"
-#include "webrtc/base/crc32.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/messagedigest.h"
-#include "webrtc/base/ptr_util.h"
-#include "webrtc/base/stringencode.h"
+#include "webrtc/rtc_base/byteorder.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/crc32.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/messagedigest.h"
+#include "webrtc/rtc_base/ptr_util.h"
+#include "webrtc/rtc_base/stringencode.h"
 
 using rtc::ByteBufferReader;
 using rtc::ByteBufferWriter;
@@ -113,6 +113,11 @@ const StunByteStringAttribute* StunMessage::GetByteString(int type) const {
 const StunErrorCodeAttribute* StunMessage::GetErrorCode() const {
   return static_cast<const StunErrorCodeAttribute*>(
       GetAttribute(STUN_ATTR_ERROR_CODE));
+}
+
+int StunMessage::GetErrorCodeValue() const {
+  const StunErrorCodeAttribute* error_attribute = GetErrorCode();
+  return error_attribute ? error_attribute->code() : STUN_ERROR_GLOBAL_FAILURE;
 }
 
 const StunUInt16ListAttribute* StunMessage::GetUnknownAttributes() const {

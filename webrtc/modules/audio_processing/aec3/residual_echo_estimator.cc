@@ -13,7 +13,7 @@
 #include <numeric>
 #include <vector>
 
-#include "webrtc/base/checks.h"
+#include "webrtc/rtc_base/checks.h"
 
 namespace webrtc {
 namespace {
@@ -32,8 +32,8 @@ void EchoGeneratingPower(const RenderBuffer& render_buffer,
   }
 
   // Apply soft noise gate of -78 dBFS.
-  constexpr float kNoiseGatePower = 27509.42f;
-  std::for_each(X2->begin(), X2->end(), [kNoiseGatePower](float& a) {
+  static constexpr float kNoiseGatePower = 27509.42f;
+  std::for_each(X2->begin(), X2->end(), [](float& a) {
     if (kNoiseGatePower > a) {
       a = std::max(0.f, a - 0.3f * (kNoiseGatePower - a));
     }
@@ -79,7 +79,9 @@ constexpr float kHeadsetEchoPathGain = 0.0005f;
 
 }  // namespace
 
-ResidualEchoEstimator::ResidualEchoEstimator() {
+ResidualEchoEstimator::ResidualEchoEstimator(
+    const AudioProcessing::Config::EchoCanceller3& config)
+    : config_(config) {
   Reset();
 }
 
@@ -95,10 +97,10 @@ void ResidualEchoEstimator::Estimate(
   RTC_DCHECK(R2);
 
   const rtc::Optional<size_t> delay =
-      aec_state.FilterDelay()
-          ? aec_state.FilterDelay()
-          : (aec_state.ExternalDelay() ? aec_state.ExternalDelay()
-                                       : rtc::Optional<size_t>());
+      aec_state.ExternalDelay()
+          ? (aec_state.FilterDelay() ? aec_state.FilterDelay()
+                                     : aec_state.ExternalDelay())
+          : rtc::Optional<size_t>();
 
   // Estimate the power of the stationary noise in the render signal.
   RenderNoisePower(render_buffer, &X2_noise_floor_, &X2_noise_floor_counter_);
@@ -111,11 +113,11 @@ void ResidualEchoEstimator::Estimate(
     const int filter_delay = *aec_state.FilterDelay();
     LinearEstimate(S2_linear, aec_state.Erle(), filter_delay, R2);
     AddEchoReverb(S2_linear, aec_state.SaturatedEcho(), filter_delay,
-                  aec_state.ReverbDecayFactor(), R2);
+                  aec_state.ReverbDecay(), R2);
   } else {
     // Estimate the echo generating signal power.
     std::array<float, kFftLengthBy2Plus1> X2;
-    if (aec_state.ExternalDelay() || aec_state.FilterDelay()) {
+    if (aec_state.ExternalDelay() && aec_state.FilterDelay()) {
       RTC_DCHECK(delay);
       const int delay_use = static_cast<int>(*delay);
 
@@ -136,13 +138,17 @@ void ResidualEchoEstimator::Estimate(
         X2.begin(), X2.end(), X2_noise_floor_.begin(), X2.begin(),
         [](float a, float b) { return std::max(0.f, a - 10.f * b); });
 
-    NonLinearEstimate(
-        aec_state.HeadsetDetected() ? kHeadsetEchoPathGain : kFixedEchoPathGain,
-        X2, Y2, R2);
+    NonLinearEstimate(aec_state.HeadsetDetected(), X2, Y2, R2);
     AddEchoReverb(*R2, aec_state.SaturatedEcho(),
                   std::min(static_cast<size_t>(kAdaptiveFilterLength),
                            delay.value_or(kAdaptiveFilterLength)),
-                  aec_state.ReverbDecayFactor(), R2);
+                  aec_state.ReverbDecay(), R2);
+  }
+
+  // If the echo is deemed inaudible, set the residual echo to zero.
+  if (aec_state.InaudibleEcho() &&
+      (aec_state.ExternalDelay() || aec_state.HeadsetDetected())) {
+    R2->fill(0.f);
   }
 
   // If the echo is saturated, estimate the echo power as the maximum echo power
@@ -179,13 +185,28 @@ void ResidualEchoEstimator::LinearEstimate(
 }
 
 void ResidualEchoEstimator::NonLinearEstimate(
-    float echo_path_gain,
+    bool headset_detected,
     const std::array<float, kFftLengthBy2Plus1>& X2,
     const std::array<float, kFftLengthBy2Plus1>& Y2,
     std::array<float, kFftLengthBy2Plus1>* R2) {
+  // Choose gains.
+  const float echo_path_gain_lf =
+      headset_detected ? kHeadsetEchoPathGain : config_.param.ep_strength.lf;
+  const float echo_path_gain_mf =
+      headset_detected ? kHeadsetEchoPathGain : config_.param.ep_strength.mf;
+  const float echo_path_gain_hf =
+      headset_detected ? kHeadsetEchoPathGain : config_.param.ep_strength.hf;
+
   // Compute preliminary residual echo.
-  std::transform(X2.begin(), X2.end(), R2->begin(),
-                 [echo_path_gain](float a) { return a * echo_path_gain; });
+  std::transform(
+      X2.begin(), X2.begin() + 12, R2->begin(),
+      [echo_path_gain_lf](float a) { return a * echo_path_gain_lf; });
+  std::transform(
+      X2.begin() + 12, X2.begin() + 25, R2->begin() + 12,
+      [echo_path_gain_mf](float a) { return a * echo_path_gain_mf; });
+  std::transform(
+      X2.begin() + 25, X2.end(), R2->begin() + 25,
+      [echo_path_gain_hf](float a) { return a * echo_path_gain_hf; });
 
   for (size_t k = 0; k < R2->size(); ++k) {
     // Update hold counter.

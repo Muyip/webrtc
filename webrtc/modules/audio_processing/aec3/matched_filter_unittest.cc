@@ -18,12 +18,12 @@
 #include <sstream>
 #include <string>
 
-#include "webrtc/base/random.h"
 #include "webrtc/modules/audio_processing/aec3/aec3_common.h"
 #include "webrtc/modules/audio_processing/aec3/decimator_by_4.h"
 #include "webrtc/modules/audio_processing/aec3/render_delay_buffer.h"
 #include "webrtc/modules/audio_processing/logging/apm_data_dumper.h"
 #include "webrtc/modules/audio_processing/test/echo_canceller_test_tools.h"
+#include "webrtc/rtc_base/random.h"
 #include "webrtc/system_wrappers/include/cpu_features_wrapper.h"
 #include "webrtc/test/gtest.h"
 
@@ -43,10 +43,47 @@ constexpr size_t kNumMatchedFilters = 4;
 
 }  // namespace
 
-#if defined(WEBRTC_ARCH_X86_FAMILY)
-// Verifies that the optimized methods are bitexact to their reference
+#if defined(WEBRTC_HAS_NEON)
+// Verifies that the optimized methods for NEON are similar to their reference
 // counterparts.
-TEST(MatchedFilter, TestOptimizations) {
+TEST(MatchedFilter, TestNeonOptimizations) {
+  Random random_generator(42U);
+  std::vector<float> x(2000);
+  RandomizeSampleVector(&random_generator, x);
+  std::vector<float> y(kSubBlockSize);
+  std::vector<float> h_NEON(512);
+  std::vector<float> h(512);
+  int x_index = 0;
+  for (int k = 0; k < 1000; ++k) {
+    RandomizeSampleVector(&random_generator, y);
+
+    bool filters_updated = false;
+    float error_sum = 0.f;
+    bool filters_updated_NEON = false;
+    float error_sum_NEON = 0.f;
+
+    MatchedFilterCore_NEON(x_index, h.size() * 150.f * 150.f, x, y, h_NEON,
+                           &filters_updated_NEON, &error_sum_NEON);
+
+    MatchedFilterCore(x_index, h.size() * 150.f * 150.f, x, y, h,
+                      &filters_updated, &error_sum);
+
+    EXPECT_EQ(filters_updated, filters_updated_NEON);
+    EXPECT_NEAR(error_sum, error_sum_NEON, error_sum / 100000.f);
+
+    for (size_t j = 0; j < h.size(); ++j) {
+      EXPECT_NEAR(h[j], h_NEON[j], 0.00001f);
+    }
+
+    x_index = (x_index + kSubBlockSize) % x.size();
+  }
+}
+#endif
+
+#if defined(WEBRTC_ARCH_X86_FAMILY)
+// Verifies that the optimized methods for SSE2 are bitexact to their reference
+// counterparts.
+TEST(MatchedFilter, TestSse2Optimizations) {
   bool use_sse2 = (WebRtc_GetCPUInfo(kSSE2) != 0);
   if (use_sse2) {
     Random random_generator(42U);
@@ -100,7 +137,7 @@ TEST(MatchedFilter, LagEstimation) {
     DelayBuffer<float> signal_delay_buffer(4 * delay_samples);
     MatchedFilter filter(&data_dumper, DetectOptimization(),
                          kWindowSizeSubBlocks, kNumMatchedFilters,
-                         kAlignmentShiftSubBlocks);
+                         kAlignmentShiftSubBlocks, 150);
     std::unique_ptr<RenderDelayBuffer> render_delay_buffer(
         RenderDelayBuffer::Create(3));
 
@@ -169,7 +206,7 @@ TEST(MatchedFilter, LagNotReliableForUncorrelatedRenderAndCapture) {
   std::unique_ptr<RenderDelayBuffer> render_delay_buffer(
       RenderDelayBuffer::Create(3));
   MatchedFilter filter(&data_dumper, DetectOptimization(), kWindowSizeSubBlocks,
-                       kNumMatchedFilters, kAlignmentShiftSubBlocks);
+                       kNumMatchedFilters, kAlignmentShiftSubBlocks, 150);
 
   // Analyze the correlation between render and capture.
   for (size_t k = 0; k < 100; ++k) {
@@ -199,7 +236,7 @@ TEST(MatchedFilter, LagNotUpdatedForLowLevelRender) {
   capture.fill(0.f);
   ApmDataDumper data_dumper(0);
   MatchedFilter filter(&data_dumper, DetectOptimization(), kWindowSizeSubBlocks,
-                       kNumMatchedFilters, kAlignmentShiftSubBlocks);
+                       kNumMatchedFilters, kAlignmentShiftSubBlocks, 150);
   std::unique_ptr<RenderDelayBuffer> render_delay_buffer(
       RenderDelayBuffer::Create(3));
   DecimatorBy4 capture_decimator;
@@ -236,7 +273,7 @@ TEST(MatchedFilter, NumberOfLagEstimates) {
   for (size_t num_matched_filters = 0; num_matched_filters < 10;
        ++num_matched_filters) {
     MatchedFilter filter(&data_dumper, DetectOptimization(), 32,
-                         num_matched_filters, 1);
+                         num_matched_filters, 1, 150);
     EXPECT_EQ(num_matched_filters, filter.GetLagEstimates().size());
   }
 }
@@ -246,12 +283,13 @@ TEST(MatchedFilter, NumberOfLagEstimates) {
 // Verifies the check for non-zero windows size.
 TEST(MatchedFilter, ZeroWindowSize) {
   ApmDataDumper data_dumper(0);
-  EXPECT_DEATH(MatchedFilter(&data_dumper, DetectOptimization(), 0, 1, 1), "");
+  EXPECT_DEATH(MatchedFilter(&data_dumper, DetectOptimization(), 0, 1, 1, 150),
+               "");
 }
 
 // Verifies the check for non-null data dumper.
 TEST(MatchedFilter, NullDataDumper) {
-  EXPECT_DEATH(MatchedFilter(nullptr, DetectOptimization(), 1, 1, 1), "");
+  EXPECT_DEATH(MatchedFilter(nullptr, DetectOptimization(), 1, 1, 1, 150), "");
 }
 
 #endif

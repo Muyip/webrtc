@@ -45,6 +45,11 @@ SdpAudioFormat::SdpAudioFormat(const std::string& name,
       num_channels(num_channels),
       parameters(param) {}
 
+bool SdpAudioFormat::Matches(const SdpAudioFormat& o) const {
+  return STR_CASE_CMP(name.c_str(), o.name.c_str()) == 0 &&
+         clockrate_hz == o.clockrate_hz && num_channels == o.num_channels;
+}
+
 SdpAudioFormat::~SdpAudioFormat() = default;
 SdpAudioFormat& SdpAudioFormat::operator=(const SdpAudioFormat&) = default;
 SdpAudioFormat& SdpAudioFormat::operator=(SdpAudioFormat&&) = default;
@@ -101,6 +106,25 @@ AudioCodecInfo::AudioCodecInfo(int sample_rate_hz,
   RTC_DCHECK_GE(min_bitrate_bps, 0);
   RTC_DCHECK_LE(min_bitrate_bps, default_bitrate_bps);
   RTC_DCHECK_GE(max_bitrate_bps, default_bitrate_bps);
+}
+
+std::ostream& operator<<(std::ostream& os, const AudioCodecInfo& aci) {
+  os << "{sample_rate_hz: " << aci.sample_rate_hz;
+  os << ", num_channels: " << aci.num_channels;
+  os << ", default_bitrate_bps: " << aci.default_bitrate_bps;
+  os << ", min_bitrate_bps: " << aci.min_bitrate_bps;
+  os << ", max_bitrate_bps: " << aci.max_bitrate_bps;
+  os << ", allow_comfort_noise: " << aci.allow_comfort_noise;
+  os << ", supports_network_adaption: " << aci.supports_network_adaption;
+  os << "}";
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const AudioCodecSpec& acs) {
+  os << "{format: " << acs.format;
+  os << ", info: " << acs.info;
+  os << "}";
+  return os;
 }
 
 }  // namespace webrtc

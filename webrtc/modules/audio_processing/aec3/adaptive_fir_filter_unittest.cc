@@ -10,6 +10,7 @@
 
 #include "webrtc/modules/audio_processing/aec3/adaptive_fir_filter.h"
 
+#include <math.h>
 #include <algorithm>
 #include <numeric>
 #include <string>
@@ -17,8 +18,6 @@
 #if defined(WEBRTC_ARCH_X86_FAMILY)
 #include <emmintrin.h>
 #endif
-#include "webrtc/base/arraysize.h"
-#include "webrtc/base/random.h"
 #include "webrtc/modules/audio_processing/aec3/aec3_fft.h"
 #include "webrtc/modules/audio_processing/aec3/aec_state.h"
 #include "webrtc/modules/audio_processing/aec3/cascaded_biquad_filter.h"
@@ -26,6 +25,9 @@
 #include "webrtc/modules/audio_processing/aec3/shadow_filter_update_gain.h"
 #include "webrtc/modules/audio_processing/logging/apm_data_dumper.h"
 #include "webrtc/modules/audio_processing/test/echo_canceller_test_tools.h"
+#include "webrtc/rtc_base/arraysize.h"
+#include "webrtc/rtc_base/random.h"
+#include "webrtc/rtc_base/safe_minmax.h"
 #include "webrtc/system_wrappers/include/cpu_features_wrapper.h"
 #include "webrtc/test/gtest.h"
 
@@ -41,10 +43,114 @@ std::string ProduceDebugText(size_t delay) {
 
 }  // namespace
 
+#if defined(WEBRTC_HAS_NEON)
+// Verifies that the optimized methods for filter adaptation are similar to
+// their reference counterparts.
+TEST(AdaptiveFirFilter, FilterAdaptationNeonOptimizations) {
+  RenderBuffer render_buffer(Aec3Optimization::kNone, 3, 12,
+                             std::vector<size_t>(1, 12));
+  Random random_generator(42U);
+  std::vector<std::vector<float>> x(3, std::vector<float>(kBlockSize, 0.f));
+  FftData S_C;
+  FftData S_NEON;
+  FftData G;
+  Aec3Fft fft;
+  std::vector<FftData> H_C(10);
+  std::vector<FftData> H_NEON(10);
+  for (auto& H_j : H_C) {
+    H_j.Clear();
+  }
+  for (auto& H_j : H_NEON) {
+    H_j.Clear();
+  }
+
+  for (size_t k = 0; k < 30; ++k) {
+    RandomizeSampleVector(&random_generator, x[0]);
+    render_buffer.Insert(x);
+  }
+
+  for (size_t j = 0; j < G.re.size(); ++j) {
+    G.re[j] = j / 10001.f;
+  }
+  for (size_t j = 1; j < G.im.size() - 1; ++j) {
+    G.im[j] = j / 20001.f;
+  }
+  G.im[0] = 0.f;
+  G.im[G.im.size() - 1] = 0.f;
+
+  AdaptPartitions_NEON(render_buffer, G, H_NEON);
+  AdaptPartitions(render_buffer, G, H_C);
+  AdaptPartitions_NEON(render_buffer, G, H_NEON);
+  AdaptPartitions(render_buffer, G, H_C);
+
+  for (size_t l = 0; l < H_C.size(); ++l) {
+    for (size_t j = 0; j < H_C[l].im.size(); ++j) {
+      EXPECT_NEAR(H_C[l].re[j], H_NEON[l].re[j], fabs(H_C[l].re[j] * 0.00001f));
+      EXPECT_NEAR(H_C[l].im[j], H_NEON[l].im[j], fabs(H_C[l].im[j] * 0.00001f));
+    }
+  }
+
+  ApplyFilter_NEON(render_buffer, H_NEON, &S_NEON);
+  ApplyFilter(render_buffer, H_C, &S_C);
+  for (size_t j = 0; j < S_C.re.size(); ++j) {
+    EXPECT_NEAR(S_C.re[j], S_NEON.re[j], fabs(S_C.re[j] * 0.00001f));
+    EXPECT_NEAR(S_C.im[j], S_NEON.im[j], fabs(S_C.re[j] * 0.00001f));
+  }
+}
+
+// Verifies that the optimized method for frequency response computation is
+// bitexact to the reference counterpart.
+TEST(AdaptiveFirFilter, UpdateFrequencyResponseNeonOptimization) {
+  const size_t kNumPartitions = 12;
+  std::vector<FftData> H(kNumPartitions);
+  std::vector<std::array<float, kFftLengthBy2Plus1>> H2(kNumPartitions);
+  std::vector<std::array<float, kFftLengthBy2Plus1>> H2_NEON(kNumPartitions);
+
+  for (size_t j = 0; j < H.size(); ++j) {
+    for (size_t k = 0; k < H[j].re.size(); ++k) {
+      H[j].re[k] = k + j / 3.f;
+      H[j].im[k] = j + k / 7.f;
+    }
+  }
+
+  UpdateFrequencyResponse(H, &H2);
+  UpdateFrequencyResponse_NEON(H, &H2_NEON);
+
+  for (size_t j = 0; j < H2.size(); ++j) {
+    for (size_t k = 0; k < H[j].re.size(); ++k) {
+      EXPECT_FLOAT_EQ(H2[j][k], H2_NEON[j][k]);
+    }
+  }
+}
+
+// Verifies that the optimized method for echo return loss computation is
+// bitexact to the reference counterpart.
+TEST(AdaptiveFirFilter, UpdateErlNeonOptimization) {
+  const size_t kNumPartitions = 12;
+  std::vector<std::array<float, kFftLengthBy2Plus1>> H2(kNumPartitions);
+  std::array<float, kFftLengthBy2Plus1> erl;
+  std::array<float, kFftLengthBy2Plus1> erl_NEON;
+
+  for (size_t j = 0; j < H2.size(); ++j) {
+    for (size_t k = 0; k < H2[j].size(); ++k) {
+      H2[j][k] = k + j / 3.f;
+    }
+  }
+
+  UpdateErlEstimator(H2, &erl);
+  UpdateErlEstimator_NEON(H2, &erl_NEON);
+
+  for (size_t j = 0; j < erl.size(); ++j) {
+    EXPECT_FLOAT_EQ(erl[j], erl_NEON[j]);
+  }
+}
+
+#endif
+
 #if defined(WEBRTC_ARCH_X86_FAMILY)
-// Verifies that the optimized methods are bitexact to their reference
-// counterparts.
-TEST(AdaptiveFirFilter, TestOptimizations) {
+// Verifies that the optimized methods for filter adaptation are bitexact to
+// their reference counterparts.
+TEST(AdaptiveFirFilter, FilterAdaptationSse2Optimizations) {
   bool use_sse2 = (WebRtc_GetCPUInfo(kSSE2) != 0);
   if (use_sse2) {
     RenderBuffer render_buffer(Aec3Optimization::kNone, 3, 12,
@@ -89,6 +195,59 @@ TEST(AdaptiveFirFilter, TestOptimizations) {
           EXPECT_FLOAT_EQ(H_C[k].im[j], H_SSE2[k].im[j]);
         }
       }
+    }
+  }
+}
+
+// Verifies that the optimized method for frequency response computation is
+// bitexact to the reference counterpart.
+TEST(AdaptiveFirFilter, UpdateFrequencyResponseSse2Optimization) {
+  bool use_sse2 = (WebRtc_GetCPUInfo(kSSE2) != 0);
+  if (use_sse2) {
+    const size_t kNumPartitions = 12;
+    std::vector<FftData> H(kNumPartitions);
+    std::vector<std::array<float, kFftLengthBy2Plus1>> H2(kNumPartitions);
+    std::vector<std::array<float, kFftLengthBy2Plus1>> H2_SSE2(kNumPartitions);
+
+    for (size_t j = 0; j < H.size(); ++j) {
+      for (size_t k = 0; k < H[j].re.size(); ++k) {
+        H[j].re[k] = k + j / 3.f;
+        H[j].im[k] = j + k / 7.f;
+      }
+    }
+
+    UpdateFrequencyResponse(H, &H2);
+    UpdateFrequencyResponse_SSE2(H, &H2_SSE2);
+
+    for (size_t j = 0; j < H2.size(); ++j) {
+      for (size_t k = 0; k < H[j].re.size(); ++k) {
+        EXPECT_FLOAT_EQ(H2[j][k], H2_SSE2[j][k]);
+      }
+    }
+  }
+}
+
+// Verifies that the optimized method for echo return loss computation is
+// bitexact to the reference counterpart.
+TEST(AdaptiveFirFilter, UpdateErlSse2Optimization) {
+  bool use_sse2 = (WebRtc_GetCPUInfo(kSSE2) != 0);
+  if (use_sse2) {
+    const size_t kNumPartitions = 12;
+    std::vector<std::array<float, kFftLengthBy2Plus1>> H2(kNumPartitions);
+    std::array<float, kFftLengthBy2Plus1> erl;
+    std::array<float, kFftLengthBy2Plus1> erl_SSE2;
+
+    for (size_t j = 0; j < H2.size(); ++j) {
+      for (size_t k = 0; k < H2[j].size(); ++k) {
+        H2[j][k] = k + j / 3.f;
+      }
+    }
+
+    UpdateErlEstimator(H2, &erl);
+    UpdateErlEstimator_SSE2(H2, &erl_SSE2);
+
+    for (size_t j = 0; j < erl.size(); ++j) {
+      EXPECT_FLOAT_EQ(erl[j], erl_SSE2[j]);
     }
   }
 }
@@ -146,10 +305,11 @@ TEST(AdaptiveFirFilter, FilterAndAdapt) {
   std::vector<std::vector<float>> x(3, std::vector<float>(kBlockSize, 0.f));
   std::vector<float> n(kBlockSize, 0.f);
   std::vector<float> y(kBlockSize, 0.f);
-  AecState aec_state;
+  AecState aec_state(AudioProcessing::Config::EchoCanceller3{});
   RenderSignalAnalyzer render_signal_analyzer;
   std::vector<float> e(kBlockSize, 0.f);
-  std::array<float, kFftLength> s;
+  std::array<float, kFftLength> s_scratch;
+  std::array<float, kBlockSize> s;
   FftData S;
   FftData G;
   FftData E;
@@ -177,10 +337,10 @@ TEST(AdaptiveFirFilter, FilterAndAdapt) {
       delay_buffer.Delay(x[0], y);
 
       RandomizeSampleVector(&random_generator, n);
-      constexpr float kNoiseScaling = 1.f / 100.f;
+      static constexpr float kNoiseScaling = 1.f / 100.f;
       std::transform(
           y.begin(), y.end(), n.begin(), y.begin(),
-          [kNoiseScaling](float a, float b) { return a + b * kNoiseScaling; });
+          [](float a, float b) { return a + b * kNoiseScaling; });
 
       x_hp_filter.Process(x[0]);
       y_hp_filter.Process(y);
@@ -189,21 +349,24 @@ TEST(AdaptiveFirFilter, FilterAndAdapt) {
       render_signal_analyzer.Update(render_buffer, aec_state.FilterDelay());
 
       filter.Filter(render_buffer, &S);
-      fft.Ifft(S, &s);
-      std::transform(y.begin(), y.end(), s.begin() + kFftLengthBy2, e.begin(),
+      fft.Ifft(S, &s_scratch);
+      std::transform(y.begin(), y.end(), s_scratch.begin() + kFftLengthBy2,
+                     e.begin(),
                      [&](float a, float b) { return a - b * kScale; });
-      std::for_each(e.begin(), e.end(), [](float& a) {
-        a = std::max(std::min(a, 32767.0f), -32768.0f);
-      });
+      std::for_each(e.begin(), e.end(),
+                    [](float& a) { a = rtc::SafeClamp(a, -32768.f, 32767.f); });
       fft.ZeroPaddedFft(e, &E);
+      for (size_t k = 0; k < kBlockSize; ++k) {
+        s[k] = kScale * s_scratch[k + kFftLengthBy2];
+      }
 
       gain.Compute(render_buffer, render_signal_analyzer, E,
                    filter.SizePartitions(), false, &G);
       filter.Adapt(render_buffer, G);
       aec_state.HandleEchoPathChange(EchoPathVariability(false, false));
       aec_state.Update(filter.FilterFrequencyResponse(),
-                       rtc::Optional<size_t>(), render_buffer, E2_main, Y2,
-                       x[0], false);
+                       filter.FilterImpulseResponse(), rtc::Optional<size_t>(),
+                       render_buffer, E2_main, Y2, x[0], s, false);
     }
     // Verify that the filter is able to perform well.
     EXPECT_LT(1000 * std::inner_product(e.begin(), e.end(), e.begin(), 0.f),

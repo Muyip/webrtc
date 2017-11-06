@@ -14,16 +14,21 @@
 #include <utility>
 
 #include "webrtc/api/call/audio_sink.h"
-#include "webrtc/base/checks.h"
-#include "webrtc/base/platform_file.h"
-#include "webrtc/base/gunit.h"
 #include "webrtc/media/base/rtputils.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/gunit.h"
+#include "webrtc/rtc_base/platform_file.h"
 
 namespace cricket {
 FakeAudioSendStream::FakeAudioSendStream(
     int id, const webrtc::AudioSendStream::Config& config)
     : id_(id), config_(config) {
   RTC_DCHECK(config.voe_channel_id != -1);
+}
+
+void FakeAudioSendStream::Reconfigure(
+    const webrtc::AudioSendStream::Config& config) {
+  config_ = config;
 }
 
 const webrtc::AudioSendStream::Config&
@@ -322,26 +327,28 @@ void FakeVideoReceiveStream::EnableEncodedFrameRecording(rtc::PlatformFile file,
   rtc::ClosePlatformFile(file);
 }
 
+void FakeVideoReceiveStream::AddSecondarySink(
+    webrtc::RtpPacketSinkInterface* sink) {}
+
+void FakeVideoReceiveStream::RemoveSecondarySink(
+    const webrtc::RtpPacketSinkInterface* sink) {}
+
 FakeFlexfecReceiveStream::FakeFlexfecReceiveStream(
     const webrtc::FlexfecReceiveStream::Config& config)
-    : config_(config), receiving_(false) {}
+    : config_(config) {}
 
 const webrtc::FlexfecReceiveStream::Config&
 FakeFlexfecReceiveStream::GetConfig() const {
   return config_;
 }
 
-void FakeFlexfecReceiveStream::Start() {
-  receiving_ = true;
-}
-
-void FakeFlexfecReceiveStream::Stop() {
-  receiving_ = false;
-}
-
 // TODO(brandtr): Implement when the stats have been designed.
 webrtc::FlexfecReceiveStream::Stats FakeFlexfecReceiveStream::GetStats() const {
   return webrtc::FlexfecReceiveStream::Stats();
+}
+
+void FakeFlexfecReceiveStream::OnRtpPacket(const webrtc::RtpPacketReceived&) {
+  RTC_NOTREACHED() << "Not implemented.";
 }
 
 FakeCall::FakeCall(const webrtc::Call::Config& config)
@@ -581,6 +588,11 @@ webrtc::Call::Stats FakeCall::GetStats() const {
 void FakeCall::SetBitrateConfig(
     const webrtc::Call::Config::BitrateConfig& bitrate_config) {
   config_.bitrate_config = bitrate_config;
+}
+
+void FakeCall::SetBitrateConfigMask(
+    const webrtc::Call::Config::BitrateConfigMask& mask) {
+  // TODO(zstein): not implemented
 }
 
 void FakeCall::SignalChannelNetworkState(webrtc::MediaType media,

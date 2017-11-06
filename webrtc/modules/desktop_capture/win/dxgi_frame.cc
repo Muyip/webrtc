@@ -10,11 +10,14 @@
 
 #include "webrtc/modules/desktop_capture/win/dxgi_frame.h"
 
+#include <string.h>
+
 #include <utility>
 
-#include "webrtc/base/checks.h"
 #include "webrtc/modules/desktop_capture/desktop_frame.h"
 #include "webrtc/modules/desktop_capture/win/dxgi_duplicator_controller.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
 
 namespace webrtc {
 
@@ -30,10 +33,9 @@ bool DxgiFrame::Prepare(DesktopSize size, DesktopCapturer::SourceId source_id) {
     context_.Reset();
   }
 
-  if (resolution_change_detector_.IsChanged(size)) {
+  if (resolution_tracker_.SetResolution(size)) {
     // Once the output size changed, recreate the SharedDesktopFrame.
     frame_.reset();
-    resolution_change_detector_.Reset();
   }
 
   if (!frame_) {
@@ -44,8 +46,16 @@ bool DxgiFrame::Prepare(DesktopSize size, DesktopCapturer::SourceId source_id) {
       frame.reset(new BasicDesktopFrame(size));
     }
     if (!frame) {
+      LOG(LS_WARNING) << "DxgiFrame cannot create a new DesktopFrame.";
       return false;
     }
+    // DirectX capturer won't paint each pixel in the frame due to its one
+    // capturer per monitor design. So once the new frame is created, we should
+    // clear it to avoid the legacy image to be remained on it. See
+    // http://crbug.com/708766.
+    RTC_DCHECK_EQ(frame->stride(),
+                  frame->size().width() * DesktopFrame::kBytesPerPixel);
+    memset(frame->data(), 0, frame->stride() * frame->size().height());
 
     frame_ = SharedDesktopFrame::Wrap(std::move(frame));
   }

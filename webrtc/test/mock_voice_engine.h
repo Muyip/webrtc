@@ -15,7 +15,7 @@
 
 #include "webrtc/modules/audio_device/include/mock_audio_device.h"
 #include "webrtc/modules/audio_device/include/mock_audio_transport.h"
-#include "webrtc/modules/audio_processing/include/mock_audio_processing.h"
+#include "webrtc/modules/rtp_rtcp/mocks/mock_rtp_rtcp.h"
 #include "webrtc/test/gmock.h"
 #include "webrtc/test/mock_voe_channel_proxy.h"
 #include "webrtc/voice_engine/voice_engine_impl.h"
@@ -57,6 +57,9 @@ class MockVoiceEngine : public VoiceEngineImpl {
                   [](const std::map<int, SdpAudioFormat>& codecs) {
                     EXPECT_THAT(codecs, testing::IsEmpty());
                   }));
+          EXPECT_CALL(*proxy, GetRtpRtcp(testing::_, testing::_))
+              .WillRepeatedly(
+                  testing::SetArgPointee<0>(GetMockRtpRtcp(channel_id)));
           return proxy;
         }));
 
@@ -64,8 +67,6 @@ class MockVoiceEngine : public VoiceEngineImpl {
         .WillByDefault(testing::Return(1000));
     ON_CALL(*this, audio_device_module())
         .WillByDefault(testing::Return(&mock_audio_device_));
-    ON_CALL(*this, audio_processing())
-        .WillByDefault(testing::Return(&mock_audio_processing_));
     ON_CALL(*this, audio_transport())
         .WillByDefault(testing::Return(&mock_audio_transport_));
   }
@@ -74,6 +75,15 @@ class MockVoiceEngine : public VoiceEngineImpl {
     // trigger an assertion.
     --_ref_count;
   }
+
+  // These need to be the same each call to channel_id and must not leak.
+  MockRtpRtcp* GetMockRtpRtcp(int channel_id) {
+    if (mock_rtp_rtcps_.find(channel_id) == mock_rtp_rtcps_.end()) {
+      mock_rtp_rtcps_[channel_id].reset(new ::testing::NiceMock<MockRtpRtcp>);
+    }
+    return mock_rtp_rtcps_[channel_id].get();
+  }
+
   // Allows injecting a ChannelProxy factory.
   MOCK_METHOD1(ChannelProxyFactory, voe::ChannelProxy*(int channel_id));
 
@@ -89,9 +99,8 @@ class MockVoiceEngine : public VoiceEngineImpl {
   MOCK_METHOD3(
       Init,
       int(AudioDeviceModule* external_adm,
-          AudioProcessing* audioproc,
+          AudioProcessing* external_apm,
           const rtc::scoped_refptr<AudioDecoderFactory>& decoder_factory));
-  MOCK_METHOD0(audio_processing, AudioProcessing*());
   MOCK_METHOD0(audio_device_module, AudioDeviceModule*());
   MOCK_METHOD0(transmit_mixer, voe::TransmitMixer*());
   MOCK_METHOD0(Terminate, int());
@@ -218,7 +227,7 @@ class MockVoiceEngine : public VoiceEngineImpl {
                    unsigned int& timestamp,
                    unsigned int& playoutTimestamp,
                    unsigned int* jitter,
-                   unsigned short* fractionLost));
+                   unsigned short* fraction_lost));
   MOCK_METHOD4(GetRTPStatistics,
                int(int channel,
                    unsigned int& averageJitterMs,
@@ -241,8 +250,9 @@ class MockVoiceEngine : public VoiceEngineImpl {
   // voe::Channel does.
   rtc::scoped_refptr<AudioDecoderFactory> decoder_factory_;
 
+  std::map<int, std::unique_ptr<MockRtpRtcp>> mock_rtp_rtcps_;
+
   MockAudioDeviceModule mock_audio_device_;
-  MockAudioProcessing mock_audio_processing_;
   MockAudioTransport mock_audio_transport_;
 };
 }  // namespace test

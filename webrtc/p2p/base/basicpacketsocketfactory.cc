@@ -14,15 +14,15 @@
 
 #include "webrtc/p2p/base/asyncstuntcpsocket.h"
 #include "webrtc/p2p/base/stun.h"
-#include "webrtc/base/asynctcpsocket.h"
-#include "webrtc/base/asyncudpsocket.h"
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/nethelpers.h"
-#include "webrtc/base/physicalsocketserver.h"
-#include "webrtc/base/socketadapters.h"
-#include "webrtc/base/ssladapter.h"
-#include "webrtc/base/thread.h"
+#include "webrtc/rtc_base/asynctcpsocket.h"
+#include "webrtc/rtc_base/asyncudpsocket.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/nethelpers.h"
+#include "webrtc/rtc_base/physicalsocketserver.h"
+#include "webrtc/rtc_base/socketadapters.h"
+#include "webrtc/rtc_base/ssladapter.h"
+#include "webrtc/rtc_base/thread.h"
 
 namespace rtc {
 
@@ -105,8 +105,11 @@ AsyncPacketSocket* BasicPacketSocketFactory::CreateServerTcpSocket(
 }
 
 AsyncPacketSocket* BasicPacketSocketFactory::CreateClientTcpSocket(
-    const SocketAddress& local_address, const SocketAddress& remote_address,
-    const ProxyInfo& proxy_info, const std::string& user_agent, int opts) {
+    const SocketAddress& local_address,
+    const SocketAddress& remote_address,
+    const ProxyInfo& proxy_info,
+    const std::string& user_agent,
+    const PacketSocketTcpOptions& tcp_options) {
   AsyncSocket* socket =
       socket_factory()->CreateAsyncSocket(local_address.family(), SOCK_STREAM);
   if (!socket) {
@@ -114,10 +117,17 @@ AsyncPacketSocket* BasicPacketSocketFactory::CreateClientTcpSocket(
   }
 
   if (BindSocket(socket, local_address, 0, 0) < 0) {
-    LOG(LS_ERROR) << "TCP bind failed with error "
-                  << socket->GetError();
-    delete socket;
-    return NULL;
+    // Allow BindSocket to fail if we're binding to the ANY address, since this
+    // is mostly redundant in the first place. The socket will be bound when we
+    // call Connect() instead.
+    if (local_address.IsAnyIP()) {
+      LOG(LS_WARNING) << "TCP bind failed with error " << socket->GetError()
+                      << "; ignoring since socket is using 'any' address.";
+    } else {
+      LOG(LS_ERROR) << "TCP bind failed with error " << socket->GetError();
+      delete socket;
+      return NULL;
+    }
   }
 
   // If using a proxy, wrap the socket in a proxy socket.
@@ -131,9 +141,9 @@ AsyncPacketSocket* BasicPacketSocketFactory::CreateClientTcpSocket(
   }
 
   // Assert that at most one TLS option is used.
-  int tlsOpts =
-      opts & (PacketSocketFactory::OPT_TLS | PacketSocketFactory::OPT_TLS_FAKE |
-              PacketSocketFactory::OPT_TLS_INSECURE);
+  int tlsOpts = tcp_options.opts & (PacketSocketFactory::OPT_TLS |
+                                    PacketSocketFactory::OPT_TLS_FAKE |
+                                    PacketSocketFactory::OPT_TLS_INSECURE);
   RTC_DCHECK((tlsOpts & (tlsOpts - 1)) == 0);
 
   if ((tlsOpts & PacketSocketFactory::OPT_TLS) ||
@@ -145,8 +155,10 @@ AsyncPacketSocket* BasicPacketSocketFactory::CreateClientTcpSocket(
     }
 
     if (tlsOpts & PacketSocketFactory::OPT_TLS_INSECURE) {
-      ssl_adapter->set_ignore_bad_cert(true);
+      ssl_adapter->SetIgnoreBadCert(true);
     }
+
+    ssl_adapter->SetAlpnProtocols(tcp_options.tls_alpn_protocols);
 
     socket = ssl_adapter;
 
@@ -169,7 +181,7 @@ AsyncPacketSocket* BasicPacketSocketFactory::CreateClientTcpSocket(
 
   // Finally, wrap that socket in a TCP or STUN TCP packet socket.
   AsyncPacketSocket* tcp_socket;
-  if (opts & PacketSocketFactory::OPT_STUN) {
+  if (tcp_options.opts & PacketSocketFactory::OPT_STUN) {
     tcp_socket = new cricket::AsyncStunTCPSocket(socket, false);
   } else {
     tcp_socket = new AsyncTCPSocket(socket, false);

@@ -13,18 +13,19 @@
 #include <algorithm>
 #include <vector>
 
-#include "webrtc/base/base64.h"
-#include "webrtc/base/checks.h"
-#include "webrtc/base/crc32.h"
-#include "webrtc/base/helpers.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/messagedigest.h"
-#include "webrtc/base/network.h"
-#include "webrtc/base/ptr_util.h"
-#include "webrtc/base/stringencode.h"
-#include "webrtc/base/stringutils.h"
 #include "webrtc/p2p/base/common.h"
 #include "webrtc/p2p/base/portallocator.h"
+#include "webrtc/rtc_base/base64.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/crc32.h"
+#include "webrtc/rtc_base/helpers.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/messagedigest.h"
+#include "webrtc/rtc_base/network.h"
+#include "webrtc/rtc_base/ptr_util.h"
+#include "webrtc/rtc_base/safe_minmax.h"
+#include "webrtc/rtc_base/stringencode.h"
+#include "webrtc/rtc_base/stringutils.h"
 
 namespace {
 
@@ -69,7 +70,7 @@ const int DEFAULT_RTT = 3000;  // 3 seconds
 
 // Computes our estimate of the RTT given the current estimate.
 inline int ConservativeRTTEstimate(int rtt) {
-  return std::max(MINIMUM_RTT, std::min(MAXIMUM_RTT, 2 * rtt));
+  return rtc::SafeClamp(2 * rtt, MINIMUM_RTT, MAXIMUM_RTT);
 }
 
 // Weighting of the old rtt value to new data.
@@ -144,7 +145,6 @@ Port::Port(rtc::Thread* thread,
            const std::string& type,
            rtc::PacketSocketFactory* factory,
            rtc::Network* network,
-           const rtc::IPAddress& ip,
            const std::string& username_fragment,
            const std::string& password)
     : thread_(thread),
@@ -152,7 +152,6 @@ Port::Port(rtc::Thread* thread,
       type_(type),
       send_retransmit_count_attribute_(false),
       network_(network),
-      ip_(ip),
       min_port_(0),
       max_port_(0),
       component_(ICE_CANDIDATE_COMPONENT_DEFAULT),
@@ -171,7 +170,6 @@ Port::Port(rtc::Thread* thread,
            const std::string& type,
            rtc::PacketSocketFactory* factory,
            rtc::Network* network,
-           const rtc::IPAddress& ip,
            uint16_t min_port,
            uint16_t max_port,
            const std::string& username_fragment,
@@ -181,7 +179,6 @@ Port::Port(rtc::Thread* thread,
       type_(type),
       send_retransmit_count_attribute_(false),
       network_(network),
-      ip_(ip),
       min_port_(min_port),
       max_port_(max_port),
       component_(ICE_CANDIDATE_COMPONENT_DEFAULT),
@@ -470,14 +467,15 @@ bool Port::GetStunMessage(const char* data,
 }
 
 bool Port::IsCompatibleAddress(const rtc::SocketAddress& addr) {
-  int family = ip().family();
+  // Get a representative IP for the Network this port is configured to use.
+  rtc::IPAddress ip = network_->GetBestIP();
   // We use single-stack sockets, so families must match.
-  if (addr.family() != family) {
+  if (addr.family() != ip.family()) {
     return false;
   }
   // Link-local IPv6 ports can only connect to other link-local IPv6 ports.
-  if (family == AF_INET6 &&
-      (IPIsLinkLocal(ip()) != IPIsLinkLocal(addr.ipaddr()))) {
+  if (ip.family() == AF_INET6 &&
+      (IPIsLinkLocal(ip) != IPIsLinkLocal(addr.ipaddr()))) {
     return false;
   }
   return true;
@@ -1148,6 +1146,11 @@ void Connection::Prune() {
 }
 
 void Connection::Destroy() {
+  // TODO(deadbeef, nisse): This may leak if an application closes a
+  // PeerConnection and then quickly destroys the PeerConnectionFactory (along
+  // with the networking thread on which this message is posted). Also affects
+  // tests, with a workaround in
+  // AutoSocketServerThread::~AutoSocketServerThread.
   LOG_J(LS_VERBOSE, this) << "Connection destroyed";
   port_->thread()->Post(RTC_FROM_HERE, this, MSG_DELETE);
 }
@@ -1245,7 +1248,14 @@ void Connection::UpdateState(int64_t now) {
 void Connection::Ping(int64_t now) {
   last_ping_sent_ = now;
   ConnectionRequest *req = new ConnectionRequest(this);
-  pings_since_last_response_.push_back(SentPing(req->id(), now, nomination_));
+  // If not using renomination, we use "1" to mean "nominated" and "0" to mean
+  // "not nominated". If using renomination, values greater than 1 are used for
+  // re-nominated pairs.
+  int nomination = use_candidate_attr_ ? 1 : 0;
+  if (nomination_ > 0) {
+    nomination = nomination_;
+  }
+  pings_since_last_response_.push_back(SentPing(req->id(), now, nomination));
   packet_loss_estimator_.ExpectResponse(req->id(), now);
   LOG_J(LS_VERBOSE, this) << "Sending STUN ping "
                           << ", id=" << rtc::hex_encode(req->id())
@@ -1411,12 +1421,7 @@ void Connection::OnConnectionRequestResponse(ConnectionRequest* request,
 
 void Connection::OnConnectionRequestErrorResponse(ConnectionRequest* request,
                                                   StunMessage* response) {
-  const StunErrorCodeAttribute* error_attr = response->GetErrorCode();
-  int error_code = STUN_ERROR_GLOBAL_FAILURE;
-  if (error_attr) {
-    error_code = error_attr->code();
-  }
-
+  int error_code = response->GetErrorCodeValue();
   LOG_J(LS_INFO, this) << "Received STUN error response"
                        << " id=" << rtc::hex_encode(request->id())
                        << " code=" << error_code

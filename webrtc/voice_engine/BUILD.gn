@@ -16,10 +16,10 @@ rtc_static_library("audio_coder") {
   deps = [
     "..:webrtc_common",
     "../api/audio_codecs:builtin_audio_decoder_factory",
+    "../api/audio_codecs:builtin_audio_encoder_factory",
+    "../modules:module_api",
     "../modules/audio_coding",
-    "../modules/audio_coding:audio_encoder_factory_interface",
     "../modules/audio_coding:audio_format_conversion",
-    "../modules/audio_coding:builtin_audio_encoder_factory",
     "../modules/audio_coding:rent_a_codec",
   ]
 
@@ -37,9 +37,10 @@ rtc_static_library("file_player") {
   deps = [
     ":audio_coder",
     "..:webrtc_common",
-    "../base:rtc_base_approved",
     "../common_audio",
+    "../modules:module_api",
     "../modules/media_file",
+    "../rtc_base:rtc_base_approved",
   ]
 
   if (!build_with_chromium && is_clang) {
@@ -56,9 +57,11 @@ rtc_static_library("file_recorder") {
   deps = [
     ":audio_coder",
     "..:webrtc_common",
-    "../base:rtc_base_approved",
+    "../audio/utility:audio_frame_operations",
     "../common_audio",
+    "../modules:module_api",
     "../modules/media_file:media_file",
+    "../rtc_base:rtc_base_approved",
     "../system_wrappers",
   ]
 
@@ -138,16 +141,12 @@ rtc_static_library("voice_engine") {
     "../api:transport_api",
     "../api/audio_codecs:audio_codecs_api",
     "../api/audio_codecs:builtin_audio_decoder_factory",
+    "../api/audio_codecs:builtin_audio_encoder_factory",
     "../audio/utility:audio_frame_operations",
-    "../base:rtc_base_approved",
-    "../base:rtc_task_queue",
-
-    # TODO(nisse): Delete when declaration of RtpTransportController
-    # and related interfaces move to api/.
-    "../call:call_interfaces",
+    "../call:rtp_interfaces",
     "../common_audio",
     "../logging:rtc_event_log_api",
-    "../modules/audio_coding:audio_encoder_interface",
+    "../modules:module_api",
     "../modules/audio_coding:audio_format_conversion",
     "../modules/audio_coding:rent_a_codec",
     "../modules/audio_conference_mixer",
@@ -158,6 +157,8 @@ rtc_static_library("voice_engine") {
     "../modules/pacing",
     "../modules/rtp_rtcp",
     "../modules/utility",
+    "../rtc_base:rtc_base_approved",
+    "../rtc_base:rtc_task_queue",
     "../system_wrappers",
   ]
 }
@@ -170,8 +171,9 @@ rtc_static_library("audio_level") {
 
   deps = [
     "..:webrtc_common",
-    "../base:rtc_base_approved",
     "../common_audio",
+    "../modules:module_api",
+    "../rtc_base:rtc_base_approved",
   ]
 }
 
@@ -180,23 +182,24 @@ if (rtc_include_tests) {
     deps = [
       ":file_player",
       ":voice_engine",
-      "../base:rtc_base_approved",
+      "../common_audio",
+      "../modules:module_api",
+      "../modules/audio_coding",
+      "../modules/audio_conference_mixer",
+      "../modules/audio_device",
+      "../modules/audio_processing",
+      "../modules/media_file",
+      "../modules/rtp_rtcp",
+      "../modules/utility",
+      "../modules/video_capture:video_capture",
+      "../rtc_base:rtc_base_approved",
+      "../rtc_base:rtc_base_tests_utils",
+      "../system_wrappers",
       "../test:test_common",
+      "../test:test_main",
+      "../test:video_test_common",
       "//testing/gmock",
       "//testing/gtest",
-      "//third_party/gflags",
-      "//webrtc/common_audio",
-      "//webrtc/modules/audio_coding",
-      "//webrtc/modules/audio_conference_mixer",
-      "//webrtc/modules/audio_device",
-      "//webrtc/modules/audio_processing",
-      "//webrtc/modules/media_file",
-      "//webrtc/modules/rtp_rtcp",
-      "//webrtc/modules/utility",
-      "//webrtc/modules/video_capture:video_capture",
-      "//webrtc/system_wrappers",
-      "//webrtc/test:test_main",
-      "//webrtc/test:video_test_common",
     ]
 
     if (is_android) {
@@ -217,8 +220,8 @@ if (rtc_include_tests) {
     ]
 
     data = [
-      "//resources/utility/encapsulated_pcm16b_8khz.wav",
-      "//resources/utility/encapsulated_pcmu_8khz.wav",
+      "../../resources/utility/encapsulated_pcm16b_8khz.wav",
+      "../../resources/utility/encapsulated_pcmu_8khz.wav",
     ]
 
     if (is_win) {
@@ -243,20 +246,21 @@ if (rtc_include_tests) {
       deps = [
         ":voice_engine",
         "..:webrtc_common",
-        "../base:rtc_base_approved",
+        "../logging:rtc_event_log_api",
+        "../modules:module_api",
         "../modules/audio_device:audio_device",
         "../modules/audio_processing:audio_processing",
         "../modules/rtp_rtcp:rtp_rtcp",
+        "../modules/video_capture",
+        "../rtc_base:rtc_base_approved",
+        "../system_wrappers",
+        "../system_wrappers/:system_wrappers_default",
+        "../test/:test_common",
+        "../test/:test_support",
+        "../test/:video_test_common",
         "//testing/gmock",
         "//testing/gtest",
         "//third_party/gflags",
-        "//webrtc/logging:rtc_event_log_api",
-        "//webrtc/modules/video_capture",
-        "//webrtc/system_wrappers",
-        "//webrtc/system_wrappers/:system_wrappers_default",
-        "//webrtc/test/:test_common",
-        "//webrtc/test/:test_support",
-        "//webrtc/test/:video_test_common",
       ]
 
       sources = [

@@ -13,10 +13,10 @@
 
 #include <memory>
 
-#include "webrtc/base/criticalsection.h"
-#include "webrtc/base/platform_thread.h"
 #include "webrtc/modules/audio_device/audio_device_generic.h"
 #include "webrtc/modules/audio_device/linux/audio_mixer_manager_alsa_linux.h"
+#include "webrtc/rtc_base/criticalsection.h"
+#include "webrtc/rtc_base/platform_thread.h"
 
 #if defined(USE_X11)
 #include <X11/Xlib.h>
@@ -33,7 +33,7 @@ class EventWrapper;
 class AudioDeviceLinuxALSA : public AudioDeviceGeneric
 {
 public:
-    AudioDeviceLinuxALSA(const int32_t id);
+    AudioDeviceLinuxALSA();
     virtual ~AudioDeviceLinuxALSA();
 
     // Retrieve the currently utilized audio layer
@@ -82,12 +82,6 @@ public:
     // Microphone Automatic Gain Control (AGC)
     int32_t SetAGC(bool enable) override;
     bool AGC() const override;
-
-    // Volume control based on the Windows Wave API (Windows only)
-    int32_t SetWaveOutVolume(uint16_t volumeLeft,
-                             uint16_t volumeRight) override;
-    int32_t WaveOutVolume(uint16_t& volumeLeft,
-                          uint16_t& volumeRight) const override;
 
     // Audio mixer initialization
     int32_t InitSpeaker() override;
@@ -185,8 +179,6 @@ private:
     // pointers. A thread can be reused.
     std::unique_ptr<rtc::PlatformThread> _ptrThreadRec;
     std::unique_ptr<rtc::PlatformThread> _ptrThreadPlay;
-
-    int32_t _id;
 
     AudioMixerManagerLinuxALSA _mixerManager;
 

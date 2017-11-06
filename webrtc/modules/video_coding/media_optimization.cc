@@ -12,12 +12,14 @@
 
 #include <limits>
 
-#include "webrtc/base/logging.h"
 #include "webrtc/modules/video_coding/utility/frame_dropper.h"
+#include "webrtc/rtc_base/logging.h"
 #include "webrtc/system_wrappers/include/clock.h"
 
 namespace webrtc {
 namespace media_optimization {
+const int kMsPerSec = 1000;
+const int kBitsPerByte = 8;
 
 struct MediaOptimization::EncodedFrameSample {
   EncodedFrameSample(size_t size_bytes,
@@ -35,19 +37,12 @@ struct MediaOptimization::EncodedFrameSample {
 MediaOptimization::MediaOptimization(Clock* clock)
     : clock_(clock),
       max_bit_rate_(0),
-      codec_width_(0),
-      codec_height_(0),
       user_frame_rate_(0),
       frame_dropper_(new FrameDropper),
-      send_statistics_zero_encode_(0),
-      max_payload_size_(1460),
       video_target_bitrate_(0),
       incoming_frame_rate_(0),
       encoded_frame_samples_(),
-      avg_sent_bit_rate_bps_(0),
-      avg_sent_framerate_(0),
-      num_layers_(0) {
-  memset(send_statistics_, 0, sizeof(send_statistics_));
+      avg_sent_framerate_(0) {
   memset(incoming_frame_times_, -1, sizeof(incoming_frame_times_));
 }
 
@@ -56,53 +51,34 @@ MediaOptimization::~MediaOptimization(void) {
 
 void MediaOptimization::Reset() {
   rtc::CritScope lock(&crit_sect_);
-  SetEncodingDataInternal(0, 0, 0, 0, 0, 0, max_payload_size_);
+  SetEncodingDataInternal(0, 0, 0);
   memset(incoming_frame_times_, -1, sizeof(incoming_frame_times_));
   incoming_frame_rate_ = 0.0;
   frame_dropper_->Reset();
   frame_dropper_->SetRates(0, 0);
-  send_statistics_zero_encode_ = 0;
   video_target_bitrate_ = 0;
-  codec_width_ = 0;
-  codec_height_ = 0;
   user_frame_rate_ = 0;
   encoded_frame_samples_.clear();
-  avg_sent_bit_rate_bps_ = 0;
-  num_layers_ = 1;
 }
 
 void MediaOptimization::SetEncodingData(int32_t max_bit_rate,
                                         uint32_t target_bitrate,
-                                        uint16_t width,
-                                        uint16_t height,
-                                        uint32_t frame_rate,
-                                        int num_layers,
-                                        int32_t mtu) {
+                                        uint32_t frame_rate) {
   rtc::CritScope lock(&crit_sect_);
-  SetEncodingDataInternal(max_bit_rate, frame_rate, target_bitrate, width,
-                          height, num_layers, mtu);
+  SetEncodingDataInternal(max_bit_rate, frame_rate, target_bitrate);
 }
 
 void MediaOptimization::SetEncodingDataInternal(int32_t max_bit_rate,
                                                 uint32_t frame_rate,
-                                                uint32_t target_bitrate,
-                                                uint16_t width,
-                                                uint16_t height,
-                                                int num_layers,
-                                                int32_t mtu) {
+                                                uint32_t target_bitrate) {
   // Everything codec specific should be reset here since this means the codec
   // has changed.
-
   max_bit_rate_ = max_bit_rate;
   video_target_bitrate_ = target_bitrate;
   float target_bitrate_kbps = static_cast<float>(target_bitrate) / 1000.0f;
   frame_dropper_->Reset();
   frame_dropper_->SetRates(target_bitrate_kbps, static_cast<float>(frame_rate));
   user_frame_rate_ = static_cast<float>(frame_rate);
-  codec_width_ = width;
-  codec_height_ = height;
-  num_layers_ = (num_layers <= 1) ? 1 : num_layers;  // Can also be zero.
-  max_payload_size_ = mtu;
 }
 
 uint32_t MediaOptimization::SetTargetRates(uint32_t target_bitrate) {
@@ -118,7 +94,13 @@ uint32_t MediaOptimization::SetTargetRates(uint32_t target_bitrate) {
   // Update encoding rates following protection settings.
   float target_video_bitrate_kbps =
       static_cast<float>(video_target_bitrate_) / 1000.0f;
-  frame_dropper_->SetRates(target_video_bitrate_kbps, incoming_frame_rate_);
+  float framerate = incoming_frame_rate_;
+  if (framerate == 0.0) {
+    // No framerate estimate available, use configured max framerate instead.
+    framerate = user_frame_rate_;
+  }
+
+  frame_dropper_->SetRates(target_video_bitrate_kbps, framerate);
 
   return video_target_bitrate_;
 }
@@ -141,17 +123,19 @@ uint32_t MediaOptimization::SentFrameRate() {
 }
 
 uint32_t MediaOptimization::SentFrameRateInternal() {
-  PurgeOldFrameSamples(clock_->TimeInMilliseconds());
+  PurgeOldFrameSamples(clock_->TimeInMilliseconds() - kBitrateAverageWinMs);
   UpdateSentFramerate();
   return avg_sent_framerate_;
 }
 
 uint32_t MediaOptimization::SentBitRate() {
   rtc::CritScope lock(&crit_sect_);
-  const int64_t now_ms = clock_->TimeInMilliseconds();
-  PurgeOldFrameSamples(now_ms);
-  UpdateSentBitrate(now_ms);
-  return avg_sent_bit_rate_bps_;
+  PurgeOldFrameSamples(clock_->TimeInMilliseconds() - kBitrateAverageWinMs);
+  size_t sent_bytes = 0;
+  for (auto& frame_sample : encoded_frame_samples_) {
+    sent_bytes += frame_sample.size_bytes;
+  }
+  return sent_bytes * kBitsPerByte * kMsPerSec / kBitrateAverageWinMs;
 }
 
 int32_t MediaOptimization::UpdateWithEncodedData(
@@ -160,7 +144,7 @@ int32_t MediaOptimization::UpdateWithEncodedData(
   uint32_t timestamp = encoded_image._timeStamp;
   rtc::CritScope lock(&crit_sect_);
   const int64_t now_ms = clock_->TimeInMilliseconds();
-  PurgeOldFrameSamples(now_ms);
+  PurgeOldFrameSamples(now_ms - kBitrateAverageWinMs);
   if (encoded_frame_samples_.size() > 0 &&
       encoded_frame_samples_.back().timestamp == timestamp) {
     // Frames having the same timestamp are generated from the same input
@@ -172,7 +156,6 @@ int32_t MediaOptimization::UpdateWithEncodedData(
     encoded_frame_samples_.push_back(
         EncodedFrameSample(encoded_length, timestamp, now_ms));
   }
-  UpdateSentBitrate(now_ms);
   UpdateSentFramerate();
   if (encoded_length > 0) {
     const bool delta_frame = encoded_image._frameType != kVideoFrameKey;
@@ -209,34 +192,13 @@ void MediaOptimization::UpdateIncomingFrameRate() {
   ProcessIncomingFrameRate(now);
 }
 
-void MediaOptimization::PurgeOldFrameSamples(int64_t now_ms) {
+void MediaOptimization::PurgeOldFrameSamples(int64_t threshold_ms) {
   while (!encoded_frame_samples_.empty()) {
-    if (now_ms - encoded_frame_samples_.front().time_complete_ms >
-        kBitrateAverageWinMs) {
+    if (encoded_frame_samples_.front().time_complete_ms < threshold_ms) {
       encoded_frame_samples_.pop_front();
     } else {
       break;
     }
-  }
-}
-
-void MediaOptimization::UpdateSentBitrate(int64_t now_ms) {
-  if (encoded_frame_samples_.empty()) {
-    avg_sent_bit_rate_bps_ = 0;
-    return;
-  }
-  size_t framesize_sum = 0;
-  for (FrameSampleList::iterator it = encoded_frame_samples_.begin();
-       it != encoded_frame_samples_.end(); ++it) {
-    framesize_sum += it->size_bytes;
-  }
-  float denom = static_cast<float>(
-      now_ms - encoded_frame_samples_.front().time_complete_ms);
-  if (denom >= 1.0f) {
-    avg_sent_bit_rate_bps_ =
-        static_cast<uint32_t>(framesize_sum * 8.0f * 1000.0f / denom + 0.5f);
-  } else {
-    avg_sent_bit_rate_bps_ = framesize_sum * 8;
   }
 }
 
@@ -261,7 +223,7 @@ void MediaOptimization::ProcessIncomingFrameRate(int64_t now) {
   int32_t nr_of_frames = 0;
   for (num = 1; num < (kFrameCountHistorySize - 1); ++num) {
     if (incoming_frame_times_[num] <= 0 ||
-        // don't use data older than 2 s
+        // Don't use data older than 2 s.
         now - incoming_frame_times_[num] > kFrameHistoryWinMs) {
       break;
     } else {

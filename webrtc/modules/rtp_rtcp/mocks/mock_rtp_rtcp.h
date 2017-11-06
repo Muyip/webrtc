@@ -15,12 +15,12 @@
 #include <utility>
 #include <vector>
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/optional.h"
 #include "webrtc/modules/include/module.h"
 #include "webrtc/modules/rtp_rtcp/include/rtp_rtcp.h"
 #include "webrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h"
 #include "webrtc/modules/rtp_rtcp/source/rtcp_packet/transport_feedback.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/optional.h"
 #include "webrtc/test/gmock.h"
 
 namespace webrtc {
@@ -31,9 +31,6 @@ class MockRtpData : public RtpData {
                int32_t(const uint8_t* payload_data,
                        size_t payload_size,
                        const WebRtcRTPHeader* rtp_header));
-
-  MOCK_METHOD2(OnRecoveredPacket,
-               bool(const uint8_t* packet, size_t packet_length));
 };
 
 class MockRtpRtcp : public RtpRtcp {
@@ -56,7 +53,6 @@ class MockRtpRtcp : public RtpRtcp {
   MOCK_METHOD1(RegisterSendTransport, int32_t(Transport* outgoing_transport));
   MOCK_METHOD1(SetMaxRtpPacketSize, void(size_t size));
   MOCK_METHOD1(SetTransportOverhead, void(int transport_overhead_per_packet));
-  MOCK_CONST_METHOD0(MaxPayloadSize, size_t());
   MOCK_CONST_METHOD0(MaxRtpPacketSize, size_t());
   MOCK_METHOD1(RegisterSendPayload, int32_t(const CodecInst& voice_codec));
   MOCK_METHOD1(RegisterSendPayload, int32_t(const VideoCodec& video_codec));
@@ -151,7 +147,6 @@ class MockRtpRtcp : public RtpRtcp {
                      void(StreamDataCounters*, StreamDataCounters*));
   MOCK_CONST_METHOD3(GetRtpPacketLossStats,
                      void(bool, uint32_t, struct RtpPacketLossStats*));
-  MOCK_METHOD1(RemoteRTCPStat, int32_t(RTCPSenderInfo* sender_info));
   MOCK_CONST_METHOD1(RemoteRTCPStat,
                      int32_t(std::vector<RTCPReportBlock>* receive_blocks));
   MOCK_METHOD4(SetRTCPApplicationSpecificData,
@@ -179,7 +174,6 @@ class MockRtpRtcp : public RtpRtcp {
   MOCK_METHOD1(RegisterRtcpStatisticsCallback, void(RtcpStatisticsCallback*));
   MOCK_METHOD0(GetRtcpStatisticsCallback, RtcpStatisticsCallback*());
   MOCK_METHOD1(SendFeedbackPacket, bool(const rtcp::TransportFeedback& packet));
-  MOCK_METHOD1(SetAudioPacketSize, int32_t(uint16_t packet_size_samples));
   MOCK_METHOD3(SendTelephoneEventOutband,
                int32_t(uint8_t key, uint16_t time_ms, uint8_t level));
   MOCK_METHOD1(SetSendREDPayloadType, int32_t(int8_t payload_type));

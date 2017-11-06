@@ -14,10 +14,10 @@
 #include <map>
 #include <vector>
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
 #include "webrtc/common_video/include/frame_callback.h"
 #include "webrtc/modules/video_coding/video_coding_impl.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
 #include "webrtc/system_wrappers/include/metrics.h"
 #include "webrtc/video/call_stats.h"
 #include "webrtc/video/payload_router.h"
@@ -76,10 +76,10 @@ VideoStreamDecoder::~VideoStreamDecoder() {
 // thread may have held the lock when calling VideoDecoder::Decode, Reset, or
 // Release. Acquiring the same lock in the path of decode callback can deadlock.
 int32_t VideoStreamDecoder::FrameToRender(VideoFrame& video_frame,
-                                          rtc::Optional<uint8_t> qp) {
-  receive_stats_callback_->OnDecodedFrame(qp);
+                                          rtc::Optional<uint8_t> qp,
+                                          VideoContentType content_type) {
+  receive_stats_callback_->OnDecodedFrame(qp, content_type);
   incoming_video_stream_->OnFrame(video_frame);
-
   return 0;
 }
 
@@ -119,7 +119,12 @@ void VideoStreamDecoder::OnFrameBufferTimingsUpdated(int decode_ms,
                                                      int min_playout_delay_ms,
                                                      int render_delay_ms) {}
 
-void VideoStreamDecoder::OnCompleteFrame(bool is_keyframe, size_t size_bytes) {}
+void VideoStreamDecoder::OnTimingFrameInfoUpdated(const TimingFrameInfo& info) {
+}
+
+void VideoStreamDecoder::OnCompleteFrame(bool is_keyframe,
+                                         size_t size_bytes,
+                                         VideoContentType content_type) {}
 
 void VideoStreamDecoder::OnRttUpdate(int64_t avg_rtt_ms, int64_t max_rtt_ms) {
   video_receiver_->SetReceiveChannelParameters(max_rtt_ms);

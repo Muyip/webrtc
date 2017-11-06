@@ -14,13 +14,23 @@
 #include <string.h>  // memset
 #include <algorithm>
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/safe_conversions.h"
 #include "webrtc/modules/audio_coding/neteq/decision_logic.h"
 #include "webrtc/modules/audio_coding/neteq/delay_manager.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/safe_conversions.h"
 #include "webrtc/system_wrappers/include/metrics.h"
 
 namespace webrtc {
+
+namespace {
+size_t AddIntToSizeTWithLowerCap(int a, size_t b) {
+  const size_t ret = b + a;
+  // If a + b is negative, resulting in a negative wrap, cap it to zero instead.
+  static_assert(sizeof(size_t) >= sizeof(int),
+                "int must not be wider than size_t for this to work");
+  return (a < 0 && ret > b) ? 0 : ret;
+}
+}  // namespace
 
 // Allocating the static const so that it can be passed by reference to
 // RTC_DCHECK.
@@ -113,14 +123,14 @@ StatisticsCalculator::StatisticsCalculator()
       lost_timestamps_(0),
       timestamps_since_last_report_(0),
       secondary_decoded_samples_(0),
+      discarded_secondary_packets_(0),
       delayed_packet_outage_counter_(
           "WebRTC.Audio.DelayedPacketOutageEventsPerMinute",
           60000,  // 60 seconds report interval.
           100),
       excess_buffer_delay_("WebRTC.Audio.AverageExcessBufferDelayMs",
                            60000,  // 60 seconds report interval.
-                           1000) {
-}
+                           1000) {}
 
 StatisticsCalculator::~StatisticsCalculator() = default;
 
@@ -131,6 +141,7 @@ void StatisticsCalculator::Reset() {
   expanded_speech_samples_ = 0;
   expanded_noise_samples_ = 0;
   secondary_decoded_samples_ = 0;
+  discarded_secondary_packets_ = 0;
   waiting_times_.clear();
 }
 
@@ -142,14 +153,29 @@ void StatisticsCalculator::ResetMcu() {
 
 void StatisticsCalculator::ExpandedVoiceSamples(size_t num_samples) {
   expanded_speech_samples_ += num_samples;
+  lifetime_stats_.concealed_samples += num_samples;
 }
 
 void StatisticsCalculator::ExpandedNoiseSamples(size_t num_samples) {
   expanded_noise_samples_ += num_samples;
+  lifetime_stats_.concealed_samples += num_samples;
+}
+
+void StatisticsCalculator::ExpandedVoiceSamplesCorrection(int num_samples) {
+  expanded_speech_samples_ =
+      AddIntToSizeTWithLowerCap(num_samples, expanded_speech_samples_);
+  lifetime_stats_.concealed_samples += num_samples;
+}
+
+void StatisticsCalculator::ExpandedNoiseSamplesCorrection(int num_samples) {
+  expanded_noise_samples_ =
+      AddIntToSizeTWithLowerCap(num_samples, expanded_noise_samples_);
+  lifetime_stats_.concealed_samples += num_samples;
 }
 
 void StatisticsCalculator::PreemptiveExpandedSamples(size_t num_samples) {
   preemptive_samples_ += num_samples;
+  lifetime_stats_.concealed_samples += num_samples;
 }
 
 void StatisticsCalculator::AcceleratedSamples(size_t num_samples) {
@@ -162,6 +188,10 @@ void StatisticsCalculator::AddZeros(size_t num_samples) {
 
 void StatisticsCalculator::PacketsDiscarded(size_t num_packets) {
   discarded_packets_ += num_packets;
+}
+
+void StatisticsCalculator::SecondaryPacketsDiscarded(size_t num_packets) {
+  discarded_secondary_packets_ += num_packets;
 }
 
 void StatisticsCalculator::LostSamples(size_t num_samples) {
@@ -180,6 +210,7 @@ void StatisticsCalculator::IncreaseCounter(size_t num_samples, int fs_hz) {
     timestamps_since_last_report_ = 0;
     discarded_packets_ = 0;
   }
+  lifetime_stats_.total_samples_received += num_samples;
 }
 
 void StatisticsCalculator::SecondaryDecodedSamples(int num_samples) {
@@ -229,10 +260,6 @@ void StatisticsCalculator::GetNetworkStatistics(
   stats->packet_loss_rate =
       CalculateQ14Ratio(lost_timestamps_, timestamps_since_last_report_);
 
-  const size_t discarded_samples = discarded_packets_ * samples_per_packet;
-  stats->packet_discard_rate =
-      CalculateQ14Ratio(discarded_samples, timestamps_since_last_report_);
-
   stats->accelerate_rate =
       CalculateQ14Ratio(accelerate_samples_, timestamps_since_last_report_);
 
@@ -250,6 +277,13 @@ void StatisticsCalculator::GetNetworkStatistics(
   stats->secondary_decoded_rate =
       CalculateQ14Ratio(secondary_decoded_samples_,
                         timestamps_since_last_report_);
+
+  const size_t discarded_secondary_samples =
+      discarded_secondary_packets_ * samples_per_packet;
+  stats->secondary_discarded_rate = CalculateQ14Ratio(
+      discarded_secondary_samples,
+      static_cast<uint32_t>(discarded_secondary_samples +
+        secondary_decoded_samples_));
 
   if (waiting_times_.size() == 0) {
     stats->mean_waiting_time_ms = -1;
@@ -278,6 +312,10 @@ void StatisticsCalculator::GetNetworkStatistics(
   // Reset counters.
   ResetMcu();
   Reset();
+}
+
+NetEqLifetimeStatistics StatisticsCalculator::GetLifetimeStatistics() const {
+  return lifetime_stats_;
 }
 
 uint16_t StatisticsCalculator::CalculateQ14Ratio(size_t numerator,

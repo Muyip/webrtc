@@ -13,11 +13,10 @@
 
 #include <vector>
 
-#include "webrtc/api/audio_codecs/audio_format.h"
-#include "webrtc/base/constructormagic.h"
-#include "webrtc/base/scoped_ref_ptr.h"
-#include "webrtc/modules/audio_coding/codecs/audio_encoder.h"
+#include "webrtc/api/audio_codecs/audio_encoder.h"
 #include "webrtc/modules/audio_coding/codecs/isac/locked_bandwidth_info.h"
+#include "webrtc/rtc_base/constructormagic.h"
+#include "webrtc/rtc_base/scoped_ref_ptr.h"
 
 namespace webrtc {
 
@@ -56,12 +55,7 @@ class AudioEncoderIsacT final : public AudioEncoder {
   explicit AudioEncoderIsacT(
       const CodecInst& codec_inst,
       const rtc::scoped_refptr<LockedIsacBandwidthInfo>& bwinfo);
-  AudioEncoderIsacT(int payload_type, const SdpAudioFormat& format);
   ~AudioEncoderIsacT() override;
-
-  static constexpr const char* GetPayloadName() { return "isac"; }
-  static rtc::Optional<AudioCodecInfo> QueryAudioEncoder(
-      const SdpAudioFormat& format);
 
   int SampleRateHz() const override;
   size_t NumChannels() const override;

@@ -19,11 +19,11 @@
 #include <ostream>
 #include <string>
 
-#include "webrtc/base/platform_thread.h"
-#include "webrtc/base/timeutils.h"
 #include "webrtc/common_types.h"
 #include "webrtc/modules/audio_coding/codecs/audio_format_conversion.h"
 #include "webrtc/modules/audio_coding/test/utility.h"
+#include "webrtc/rtc_base/platform_thread.h"
+#include "webrtc/rtc_base/timeutils.h"
 #include "webrtc/system_wrappers/include/event_wrapper.h"
 #include "webrtc/system_wrappers/include/trace.h"
 #include "webrtc/test/gtest.h"
@@ -752,8 +752,6 @@ void APITest::TestDelay(char side) {
             networkStat.jitterPeaksFound);
     fprintf(stdout, "packet-size rate........ %d\n",
             networkStat.currentPacketLossRate);
-    fprintf(stdout, "discard rate............ %d\n",
-            networkStat.currentDiscardRate);
     fprintf(stdout, "expand rate............. %d\n",
             networkStat.currentExpandRate);
     fprintf(stdout, "speech expand rate...... %d\n",
@@ -764,6 +762,8 @@ void APITest::TestDelay(char side) {
             networkStat.currentAccelerateRate);
     fprintf(stdout, "Secondary decoded rate.. %d\n",
             networkStat.currentSecondaryDecodedRate);
+    fprintf(stdout, "Secondary discarded rate.%d\n",
+            networkStat.currentSecondaryDiscardedRate);
     fprintf(stdout, "Clock-drift............. %d\n", networkStat.clockDriftPPM);
     fprintf(stdout, "Mean waiting time....... %d\n",
             networkStat.meanWaitingTimeMs);

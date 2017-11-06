@@ -15,18 +15,17 @@
 #include <utility>
 #include <vector>
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/constructormagic.h"
-#include "webrtc/base/thread_checker.h"
 #include "webrtc/modules/congestion_controller/median_slope_estimator.h"
 #include "webrtc/modules/congestion_controller/probe_bitrate_estimator.h"
-#include "webrtc/modules/congestion_controller/probing_interval_estimator.h"
 #include "webrtc/modules/congestion_controller/trendline_estimator.h"
 #include "webrtc/modules/remote_bitrate_estimator/aimd_rate_control.h"
 #include "webrtc/modules/remote_bitrate_estimator/include/remote_bitrate_estimator.h"
 #include "webrtc/modules/remote_bitrate_estimator/inter_arrival.h"
 #include "webrtc/modules/remote_bitrate_estimator/overuse_detector.h"
 #include "webrtc/modules/remote_bitrate_estimator/overuse_estimator.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/constructormagic.h"
+#include "webrtc/rtc_base/race_checker.h"
 
 namespace webrtc {
 
@@ -37,64 +36,47 @@ class DelayBasedBwe {
   static const int64_t kStreamTimeOutMs = 2000;
 
   struct Result {
-    Result() : updated(false), probe(false), target_bitrate_bps(0) {}
-    Result(bool probe, uint32_t target_bitrate_bps)
-        : updated(true), probe(probe), target_bitrate_bps(target_bitrate_bps) {}
+    Result();
+    Result(bool probe, uint32_t target_bitrate_bps);
+    ~Result();
     bool updated;
     bool probe;
     uint32_t target_bitrate_bps;
+    bool recovered_from_overuse;
   };
 
   DelayBasedBwe(RtcEventLog* event_log, const Clock* clock);
-  virtual ~DelayBasedBwe() {}
+  virtual ~DelayBasedBwe();
 
   Result IncomingPacketFeedbackVector(
-      const std::vector<PacketFeedback>& packet_feedback_vector);
+      const std::vector<PacketFeedback>& packet_feedback_vector,
+      rtc::Optional<uint32_t> acked_bitrate_bps);
   void OnRttUpdate(int64_t avg_rtt_ms, int64_t max_rtt_ms);
   bool LatestEstimate(std::vector<uint32_t>* ssrcs,
                       uint32_t* bitrate_bps) const;
   void SetStartBitrate(int start_bitrate_bps);
   void SetMinBitrate(int min_bitrate_bps);
-  int64_t GetProbingIntervalMs() const;
+  int64_t GetExpectedBwePeriodMs() const;
 
  private:
-  // Computes a bayesian estimate of the throughput given acks containing
-  // the arrival time and payload size. Samples which are far from the current
-  // estimate or are based on few packets are given a smaller weight, as they
-  // are considered to be more likely to have been caused by, e.g., delay spikes
-  // unrelated to congestion.
-  class BitrateEstimator {
-   public:
-    BitrateEstimator();
-    void Update(int64_t now_ms, int bytes);
-    rtc::Optional<uint32_t> bitrate_bps() const;
-
-   private:
-    float UpdateWindow(int64_t now_ms, int bytes, int rate_window_ms);
-    int sum_;
-    int64_t current_win_ms_;
-    int64_t prev_time_ms_;
-    float bitrate_estimate_;
-    float bitrate_estimate_var_;
-  };
-
-  Result IncomingPacketFeedback(const PacketFeedback& packet_feedback);
+  void IncomingPacketFeedback(const PacketFeedback& packet_feedback);
   Result OnLongFeedbackDelay(int64_t arrival_time_ms);
+  Result MaybeUpdateEstimate(bool overusing,
+                             rtc::Optional<uint32_t> acked_bitrate_bps,
+                             bool request_probe);
   // Updates the current remote rate estimate and returns true if a valid
   // estimate exists.
-  bool UpdateEstimate(int64_t packet_arrival_time_ms,
-                      int64_t now_ms,
+  bool UpdateEstimate(int64_t now_ms,
                       rtc::Optional<uint32_t> acked_bitrate_bps,
+                      bool overusing,
                       uint32_t* target_bitrate_bps);
 
-  rtc::ThreadChecker network_thread_;
+  rtc::RaceChecker network_race_;
   RtcEventLog* const event_log_;
   const Clock* const clock_;
   std::unique_ptr<InterArrival> inter_arrival_;
   std::unique_ptr<TrendlineEstimator> trendline_estimator_;
   OveruseDetector detector_;
-  BitrateEstimator receiver_incoming_bitrate_;
-  int64_t last_update_ms_;
   int64_t last_seen_packet_ms_;
   bool uma_recorded_;
   AimdRateControl rate_control_;
@@ -102,10 +84,10 @@ class DelayBasedBwe {
   size_t trendline_window_size_;
   double trendline_smoothing_coeff_;
   double trendline_threshold_gain_;
-  ProbingIntervalEstimator probing_interval_estimator_;
   int consecutive_delayed_feedbacks_;
   uint32_t last_logged_bitrate_;
   BandwidthUsage last_logged_state_;
+  bool in_sparse_update_experiment_;
 
   RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(DelayBasedBwe);
 };

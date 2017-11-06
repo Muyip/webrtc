@@ -14,18 +14,15 @@
 #include <utility>  // For std::move.
 #include <vector>
 
+#include "webrtc/api/audio_codecs/builtin_audio_decoder_factory.h"
+#include "webrtc/api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "webrtc/api/mediastreamtrackproxy.h"
 #include "webrtc/api/proxy.h"
 #include "webrtc/api/rtcerror.h"
 #include "webrtc/api/videosourceproxy.h"
-#include "webrtc/base/asyncpacketsocket.h"
-#include "webrtc/base/bind.h"
-#include "webrtc/base/checks.h"
-#include "webrtc/base/helpers.h"
-#include "webrtc/base/logging.h"
 #include "webrtc/logging/rtc_event_log/rtc_event_log.h"
 #include "webrtc/media/base/mediaconstants.h"
-#include "webrtc/modules/audio_coding/codecs/builtin_audio_decoder_factory.h"
+#include "webrtc/modules/audio_processing/include/audio_processing.h"
 #include "webrtc/ortc/ortcrtpreceiveradapter.h"
 #include "webrtc/ortc/ortcrtpsenderadapter.h"
 #include "webrtc/ortc/rtpparametersconversion.h"
@@ -38,6 +35,11 @@
 #include "webrtc/pc/localaudiosource.h"
 #include "webrtc/pc/videocapturertracksource.h"
 #include "webrtc/pc/videotrack.h"
+#include "webrtc/rtc_base/asyncpacketsocket.h"
+#include "webrtc/rtc_base/bind.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/helpers.h"
+#include "webrtc/rtc_base/logging.h"
 
 namespace {
 
@@ -74,14 +76,14 @@ PROXY_METHOD0(RTCErrorOr<std::unique_ptr<RtpTransportControllerInterface>>,
               CreateRtpTransportController)
 PROXY_METHOD4(RTCErrorOr<std::unique_ptr<RtpTransportInterface>>,
               CreateRtpTransport,
-              const RtcpParameters&,
+              const RtpTransportParameters&,
               PacketTransportInterface*,
               PacketTransportInterface*,
               RtpTransportControllerInterface*)
 
 PROXY_METHOD4(RTCErrorOr<std::unique_ptr<SrtpTransportInterface>>,
               CreateSrtpTransport,
-              const RtcpParameters&,
+              const RtpTransportParameters&,
               PacketTransportInterface*,
               PacketTransportInterface*,
               RtpTransportControllerInterface*)
@@ -168,6 +170,7 @@ OrtcFactory::OrtcFactory(rtc::Thread* network_thread,
       socket_factory_(socket_factory),
       adm_(adm),
       null_event_log_(RtcEventLog::CreateNull()),
+      audio_encoder_factory_(CreateBuiltinAudioEncoderFactory()),
       audio_decoder_factory_(CreateBuiltinAudioDecoderFactory()) {
   if (!rtc::CreateRandomString(kDefaultRtcpCnameLength, &default_cname_)) {
     LOG(LS_ERROR) << "Failed to generate CNAME?";
@@ -223,14 +226,14 @@ OrtcFactory::CreateRtpTransportController() {
 
 RTCErrorOr<std::unique_ptr<RtpTransportInterface>>
 OrtcFactory::CreateRtpTransport(
-    const RtcpParameters& rtcp_parameters,
+    const RtpTransportParameters& parameters,
     PacketTransportInterface* rtp,
     PacketTransportInterface* rtcp,
     RtpTransportControllerInterface* transport_controller) {
   RTC_DCHECK_RUN_ON(signaling_thread_);
-  RtcpParameters copied_parameters = rtcp_parameters;
-  if (copied_parameters.cname.empty()) {
-    copied_parameters.cname = default_cname_;
+  RtpTransportParameters copied_parameters = parameters;
+  if (copied_parameters.rtcp.cname.empty()) {
+    copied_parameters.rtcp.cname = default_cname_;
   }
   if (transport_controller) {
     return transport_controller->GetInternal()->CreateProxiedRtpTransport(
@@ -260,14 +263,14 @@ OrtcFactory::CreateRtpTransport(
 
 RTCErrorOr<std::unique_ptr<SrtpTransportInterface>>
 OrtcFactory::CreateSrtpTransport(
-    const RtcpParameters& rtcp_parameters,
+    const RtpTransportParameters& parameters,
     PacketTransportInterface* rtp,
     PacketTransportInterface* rtcp,
     RtpTransportControllerInterface* transport_controller) {
   RTC_DCHECK_RUN_ON(signaling_thread_);
-  RtcpParameters copied_parameters = rtcp_parameters;
-  if (copied_parameters.cname.empty()) {
-    copied_parameters.cname = default_cname_;
+  RtpTransportParameters copied_parameters = parameters;
+  if (copied_parameters.rtcp.cname.empty()) {
+    copied_parameters.rtcp.cname = default_cname_;
   }
   if (transport_controller) {
     return transport_controller->GetInternal()->CreateProxiedSrtpTransport(
@@ -476,7 +479,8 @@ rtc::scoped_refptr<VideoTrackInterface> OrtcFactory::CreateVideoTrack(
     const std::string& id,
     VideoTrackSourceInterface* source) {
   RTC_DCHECK_RUN_ON(signaling_thread_);
-  rtc::scoped_refptr<VideoTrackInterface> track(VideoTrack::Create(id, source));
+  rtc::scoped_refptr<VideoTrackInterface> track(
+      VideoTrack::Create(id, source, worker_thread_.get()));
   return VideoTrackProxy::Create(signaling_thread_, worker_thread_.get(),
                                  track);
 }
@@ -542,8 +546,9 @@ OrtcFactory::CreateMediaEngine_w() {
   // Note that |adm_| may be null, in which case the platform-specific default
   // AudioDeviceModule will be used.
   return std::unique_ptr<cricket::MediaEngineInterface>(
-      cricket::WebRtcMediaEngineFactory::Create(adm_, audio_decoder_factory_,
-                                                nullptr, nullptr, nullptr));
+      cricket::WebRtcMediaEngineFactory::Create(
+          adm_, audio_encoder_factory_, audio_decoder_factory_, nullptr,
+          nullptr, nullptr, webrtc::AudioProcessing::Create()));
 }
 
 }  // namespace webrtc

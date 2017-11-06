@@ -10,12 +10,12 @@
 
 #include <memory>
 
-#include "webrtc/base/rate_limiter.h"
 #include "webrtc/common_types.h"
 #include "webrtc/modules/rtp_rtcp/source/rtcp_packet/bye.h"
 #include "webrtc/modules/rtp_rtcp/source/rtcp_packet/common_header.h"
 #include "webrtc/modules/rtp_rtcp/source/rtcp_sender.h"
 #include "webrtc/modules/rtp_rtcp/source/rtp_rtcp_impl.h"
+#include "webrtc/rtc_base/rate_limiter.h"
 #include "webrtc/test/gmock.h"
 #include "webrtc/test/gtest.h"
 #include "webrtc/test/mock_transport.h"
@@ -197,7 +197,7 @@ class RtcpPacketTypeCounterObserverImpl : public RtcpPacketTypeCounterObserver {
 };
 
 class TestTransport : public Transport,
-                      public NullRtpData {
+                      public RtpData {
  public:
   TestTransport() {}
 
@@ -498,11 +498,33 @@ TEST_F(RtcpSenderTest, SendNack) {
 }
 
 TEST_F(RtcpSenderTest, RembStatus) {
+  const uint64_t kBitrate = 261011;
+  const std::vector<uint32_t> kSsrcs = {kRemoteSsrc, kRemoteSsrc + 1};
+  rtcp_sender_->SetRTCPStatus(RtcpMode::kReducedSize);
+
   EXPECT_FALSE(rtcp_sender_->REMB());
+  rtcp_sender_->SendRTCP(feedback_state(), kRtcpRr);
+  ASSERT_EQ(1, parser()->receiver_report()->num_packets());
+  EXPECT_EQ(0, parser()->remb()->num_packets());
+
   rtcp_sender_->SetREMBStatus(true);
   EXPECT_TRUE(rtcp_sender_->REMB());
+  rtcp_sender_->SetREMBData(kBitrate, kSsrcs);
+  rtcp_sender_->SendRTCP(feedback_state(), kRtcpRr);
+  ASSERT_EQ(2, parser()->receiver_report()->num_packets());
+  EXPECT_EQ(1, parser()->remb()->num_packets());
+
+  // Sending another report sends remb again, even if no new remb data was set.
+  rtcp_sender_->SendRTCP(feedback_state(), kRtcpRr);
+  ASSERT_EQ(3, parser()->receiver_report()->num_packets());
+  EXPECT_EQ(2, parser()->remb()->num_packets());
+
+  // Turn off remb. rtcp_sender no longer should send it.
   rtcp_sender_->SetREMBStatus(false);
   EXPECT_FALSE(rtcp_sender_->REMB());
+  rtcp_sender_->SendRTCP(feedback_state(), kRtcpRr);
+  ASSERT_EQ(4, parser()->receiver_report()->num_packets());
+  EXPECT_EQ(2, parser()->remb()->num_packets());
 }
 
 TEST_F(RtcpSenderTest, SendRemb) {

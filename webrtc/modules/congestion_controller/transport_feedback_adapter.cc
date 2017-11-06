@@ -10,11 +10,13 @@
 
 #include "webrtc/modules/congestion_controller/transport_feedback_adapter.h"
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/mod_ops.h"
+#include <algorithm>
+
 #include "webrtc/modules/congestion_controller/delay_based_bwe.h"
 #include "webrtc/modules/rtp_rtcp/source/rtcp_packet/transport_feedback.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/mod_ops.h"
 #include "webrtc/system_wrappers/include/field_trial.h"
 
 namespace webrtc {
@@ -103,11 +105,12 @@ void TransportFeedbackAdapter::SetNetworkIds(uint16_t local_id,
 std::vector<PacketFeedback> TransportFeedbackAdapter::GetPacketFeedbackVector(
     const rtcp::TransportFeedback& feedback) {
   int64_t timestamp_us = feedback.GetBaseTimeUs();
+  int64_t now_ms = clock_->TimeInMilliseconds();
   // Add timestamp deltas to a local time base selected on first packet arrival.
   // This won't be the true time base, but makes it easier to manually inspect
   // time stamps.
   if (last_timestamp_us_ == kNoTimestamp) {
-    current_offset_ms_ = clock_->TimeInMilliseconds();
+    current_offset_ms_ = now_ms;
   } else {
     int64_t delta = timestamp_us - last_timestamp_us_;
 
@@ -122,28 +125,20 @@ std::vector<PacketFeedback> TransportFeedbackAdapter::GetPacketFeedbackVector(
   }
   last_timestamp_us_ = timestamp_us;
 
-  auto received_packets = feedback.GetReceivedPackets();
   std::vector<PacketFeedback> packet_feedback_vector;
-  if (received_packets.empty()) {
+  if (feedback.GetPacketStatusCount() == 0) {
     LOG(LS_INFO) << "Empty transport feedback packet received.";
     return packet_feedback_vector;
   }
-  const uint16_t last_sequence_number =
-      received_packets.back().sequence_number();
-  const size_t packet_count =
-      1 + ForwardDiff(feedback.GetBaseSequence(), last_sequence_number);
-  packet_feedback_vector.reserve(packet_count);
-  // feedback.GetStatusVector().size() is a less efficient way to reach what
-  // should be the same value.
-  RTC_DCHECK_EQ(packet_count, feedback.GetStatusVector().size());
-
+  packet_feedback_vector.reserve(feedback.GetPacketStatusCount());
+  int64_t feedback_rtt = -1;
   {
     rtc::CritScope cs(&lock_);
     size_t failed_lookups = 0;
     int64_t offset_us = 0;
     int64_t timestamp_ms = 0;
     uint16_t seq_num = feedback.GetBaseSequence();
-    for (const auto& packet : received_packets) {
+    for (const auto& packet : feedback.GetReceivedPackets()) {
       // Insert into the vector those unreceived packets which precede this
       // iteration's received packet.
       for (; seq_num != packet.sequence_number(); ++seq_num) {
@@ -166,6 +161,12 @@ std::vector<PacketFeedback> TransportFeedbackAdapter::GetPacketFeedbackVector(
         ++failed_lookups;
       if (packet_feedback.local_net_id == local_net_id_ &&
           packet_feedback.remote_net_id == remote_net_id_) {
+        if (packet_feedback.send_time_ms >= 0) {
+          int64_t rtt = now_ms - packet_feedback.send_time_ms;
+          // max() is used to account for feedback being delayed by the
+          // receiver.
+          feedback_rtt = std::max(rtt, feedback_rtt);
+        }
         packet_feedback_vector.push_back(packet_feedback);
       }
 
@@ -176,6 +177,14 @@ std::vector<PacketFeedback> TransportFeedbackAdapter::GetPacketFeedbackVector(
       LOG(LS_WARNING) << "Failed to lookup send time for " << failed_lookups
                       << " packet" << (failed_lookups > 1 ? "s" : "")
                       << ". Send time history too small?";
+    }
+    if (feedback_rtt > -1) {
+      feedback_rtts_.push_back(feedback_rtt);
+      const size_t kFeedbackRttWindow = 32;
+      if (feedback_rtts_.size() > kFeedbackRttWindow)
+        feedback_rtts_.pop_front();
+      min_feedback_rtt_.emplace(
+          *std::min_element(feedback_rtts_.begin(), feedback_rtts_.end()));
     }
   }
   return packet_feedback_vector;
@@ -195,5 +204,15 @@ void TransportFeedbackAdapter::OnTransportFeedback(
 std::vector<PacketFeedback>
 TransportFeedbackAdapter::GetTransportFeedbackVector() const {
   return last_packet_feedback_vector_;
+}
+
+rtc::Optional<int64_t> TransportFeedbackAdapter::GetMinFeedbackLoopRtt() const {
+  rtc::CritScope cs(&lock_);
+  return min_feedback_rtt_;
+}
+
+size_t TransportFeedbackAdapter::GetOutstandingBytes() const {
+  rtc::CritScope cs(&lock_);
+  return send_time_history_.GetOutstandingBytes(local_net_id_, remote_net_id_);
 }
 }  // namespace webrtc

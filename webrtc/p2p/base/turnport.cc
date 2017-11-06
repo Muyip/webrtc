@@ -10,18 +10,19 @@
 
 #include "webrtc/p2p/base/turnport.h"
 
+#include <algorithm>
 #include <functional>
 
-#include "webrtc/base/asyncpacketsocket.h"
-#include "webrtc/base/byteorder.h"
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/nethelpers.h"
-#include "webrtc/base/ptr_util.h"
-#include "webrtc/base/socketaddress.h"
-#include "webrtc/base/stringencode.h"
 #include "webrtc/p2p/base/common.h"
 #include "webrtc/p2p/base/stun.h"
+#include "webrtc/rtc_base/asyncpacketsocket.h"
+#include "webrtc/rtc_base/byteorder.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/nethelpers.h"
+#include "webrtc/rtc_base/ptr_util.h"
+#include "webrtc/rtc_base/socketaddress.h"
+#include "webrtc/rtc_base/stringencode.h"
 
 namespace cricket {
 
@@ -194,7 +195,6 @@ TurnPort::TurnPort(rtc::Thread* thread,
            RELAY_PORT_TYPE,
            factory,
            network,
-           socket->GetLocalAddress().ipaddr(),
            username,
            password),
       server_address_(server_address),
@@ -214,7 +214,6 @@ TurnPort::TurnPort(rtc::Thread* thread,
 TurnPort::TurnPort(rtc::Thread* thread,
                    rtc::PacketSocketFactory* factory,
                    rtc::Network* network,
-                   const rtc::IPAddress& ip,
                    uint16_t min_port,
                    uint16_t max_port,
                    const std::string& username,
@@ -222,17 +221,18 @@ TurnPort::TurnPort(rtc::Thread* thread,
                    const ProtocolAddress& server_address,
                    const RelayCredentials& credentials,
                    int server_priority,
-                   const std::string& origin)
+                   const std::string& origin,
+                   const std::vector<std::string>& tls_alpn_protocols)
     : Port(thread,
            RELAY_PORT_TYPE,
            factory,
            network,
-           ip,
            min_port,
            max_port,
            username,
            password),
       server_address_(server_address),
+      tls_alpn_protocols_(tls_alpn_protocols),
       credentials_(credentials),
       socket_(NULL),
       resolver_(NULL),
@@ -293,7 +293,7 @@ void TurnPort::PrepareAddress() {
     if (!IsCompatibleAddress(server_address_.address)) {
       LOG(LS_ERROR) << "IP address family does not match: "
                     << "server: " << server_address_.address.family()
-                    << " local: " << ip().family();
+                    << " local: " << Network()->GetBestIP().family();
       OnAllocateError();
       return;
     }
@@ -322,7 +322,7 @@ bool TurnPort::CreateTurnClientSocket() {
 
   if (server_address_.proto == PROTO_UDP && !SharedSocket()) {
     socket_ = socket_factory()->CreateUdpSocket(
-        rtc::SocketAddress(ip(), 0), min_port(), max_port());
+        rtc::SocketAddress(Network()->GetBestIP(), 0), min_port(), max_port());
   } else if (server_address_.proto == PROTO_TCP ||
              server_address_.proto == PROTO_TLS) {
     RTC_DCHECK(!SharedSocket());
@@ -338,9 +338,12 @@ bool TurnPort::CreateTurnClientSocket() {
       }
     }
 
+    rtc::PacketSocketTcpOptions tcp_options;
+    tcp_options.opts = opts;
+    tcp_options.tls_alpn_protocols = tls_alpn_protocols_;
     socket_ = socket_factory()->CreateClientTcpSocket(
-        rtc::SocketAddress(ip(), 0), server_address_.address,
-        proxy(), user_agent(), opts);
+        rtc::SocketAddress(Network()->GetBestIP(), 0), server_address_.address,
+        proxy(), user_agent(), tcp_options);
   }
 
   if (!socket_) {
@@ -376,34 +379,48 @@ bool TurnPort::CreateTurnClientSocket() {
 }
 
 void TurnPort::OnSocketConnect(rtc::AsyncPacketSocket* socket) {
-  RTC_DCHECK(server_address_.proto == PROTO_TCP);
-  // Do not use this port if the socket bound to a different address than
-  // the one we asked for. This is seen in Chrome, where TCP sockets cannot be
-  // given a binding address, and the platform is expected to pick the
-  // correct local address.
+  // This slot should only be invoked if we're using a connection-oriented
+  // protocol.
+  RTC_DCHECK(server_address_.proto == PROTO_TCP ||
+             server_address_.proto == PROTO_TLS);
 
+  // Do not use this port if the socket bound to an address not associated with
+  // the desired network interface. This is seen in Chrome, where TCP sockets
+  // cannot be given a binding address, and the platform is expected to pick
+  // the correct local address.
+  //
   // However, there are two situations in which we allow the bound address to
-  // differ from the requested address: 1. The bound address is the loopback
-  // address.  This happens when a proxy forces TCP to bind to only the
-  // localhost address (see issue 3927). 2. The bound address is the "any
-  // address".  This happens when multiple_routes is disabled (see issue 4780).
-  if (socket->GetLocalAddress().ipaddr() != ip()) {
+  // not be one of the addresses of the requested interface:
+  // 1. The bound address is the loopback address. This happens when a proxy
+  // forces TCP to bind to only the localhost address (see issue 3927).
+  // 2. The bound address is the "any address". This happens when
+  // multiple_routes is disabled (see issue 4780).
+  //
+  // Note that, aside from minor differences in log statements, this logic is
+  // identical to that in TcpPort.
+  const rtc::SocketAddress& socket_address = socket->GetLocalAddress();
+  const std::vector<rtc::InterfaceAddress>& desired_addresses =
+      Network()->GetIPs();
+  if (std::find(desired_addresses.begin(), desired_addresses.end(),
+                socket_address.ipaddr()) == desired_addresses.end()) {
     if (socket->GetLocalAddress().IsLoopbackIP()) {
-      LOG(LS_WARNING) << "Socket is bound to a different address:"
-                      << socket->GetLocalAddress().ipaddr().ToString()
-                      << ", rather then the local port:" << ip().ToString()
+      LOG(LS_WARNING) << "Socket is bound to the address:"
+                      << socket_address.ipaddr().ToString()
+                      << ", rather then an address associated with network:"
+                      << Network()->ToString()
                       << ". Still allowing it since it's localhost.";
-    } else if (IPIsAny(ip())) {
-      LOG(LS_WARNING) << "Socket is bound to a different address:"
-                      << socket->GetLocalAddress().ipaddr().ToString()
-                      << ", rather then the local port:" << ip().ToString()
-                      << ". Still allowing it since it's any address"
+    } else if (IPIsAny(Network()->GetBestIP())) {
+      LOG(LS_WARNING) << "Socket is bound to the address:"
+                      << socket_address.ipaddr().ToString()
+                      << ", rather then an address associated with network:"
+                      << Network()->ToString()
+                      << ". Still allowing it since it's the 'any' address"
                       << ", possibly caused by multiple_routes being disabled.";
     } else {
-      LOG(LS_WARNING) << "Socket is bound to a different address:"
-                      << socket->GetLocalAddress().ipaddr().ToString()
-                      << ", rather then the local port:" << ip().ToString()
-                      << ". Discarding TURN port.";
+      LOG(LS_WARNING) << "Socket is bound to the address:"
+                      << socket_address.ipaddr().ToString()
+                      << ", rather then an address associated with network:"
+                      << Network()->ToString() << ". Discarding TURN port.";
       OnAllocateError();
       return;
     }
@@ -686,7 +703,8 @@ void TurnPort::OnResolveResult(rtc::AsyncResolverInterface* resolver) {
   // one of the reason could be due to DNS queries blocked by firewall.
   // In such cases we will try to connect to the server with hostname, assuming
   // socket layer will resolve the hostname through a HTTP proxy (if any).
-  if (resolver_->GetError() != 0 && server_address_.proto == PROTO_TCP) {
+  if (resolver_->GetError() != 0 && (server_address_.proto == PROTO_TCP ||
+                                     server_address_.proto == PROTO_TLS)) {
     if (!CreateTurnClientSocket()) {
       OnAllocateError();
     }
@@ -697,7 +715,8 @@ void TurnPort::OnResolveResult(rtc::AsyncResolverInterface* resolver) {
   // sockets we need hostname along with resolved address.
   rtc::SocketAddress resolved_address = server_address_.address;
   if (resolver_->GetError() != 0 ||
-      !resolver_->GetResolvedAddress(ip().family(), &resolved_address)) {
+      !resolver_->GetResolvedAddress(Network()->GetBestIP().family(),
+                                     &resolved_address)) {
     LOG_J(LS_WARNING, this) << "TURN host lookup received error "
                             << resolver_->GetError();
     error_ = resolver_->GetError();
@@ -805,7 +824,8 @@ void TurnPort::OnMessage(rtc::Message* message) {
         // Since it's TCP, we have to delete the connected socket and reconnect
         // with the alternate server. PrepareAddress will send stun binding once
         // the new socket is connected.
-        RTC_DCHECK(server_address().proto == PROTO_TCP);
+        RTC_DCHECK(server_address().proto == PROTO_TCP ||
+                   server_address().proto == PROTO_TLS);
         RTC_DCHECK(!SharedSocket());
         delete socket_;
         socket_ = NULL;
@@ -1165,19 +1185,18 @@ void TurnAllocateRequest::OnResponse(StunMessage* response) {
 
 void TurnAllocateRequest::OnErrorResponse(StunMessage* response) {
   // Process error response according to RFC5766, Section 6.4.
-  const StunErrorCodeAttribute* error_code = response->GetErrorCode();
+  int error_code = response->GetErrorCodeValue();
 
   LOG_J(LS_INFO, port_) << "Received TURN allocate error response"
                         << ", id=" << rtc::hex_encode(id())
-                        << ", code=" << error_code->code()
-                        << ", rtt=" << Elapsed();
+                        << ", code=" << error_code << ", rtt=" << Elapsed();
 
-  switch (error_code->code()) {
+  switch (error_code) {
     case STUN_ERROR_UNAUTHORIZED:       // Unauthrorized.
-      OnAuthChallenge(response, error_code->code());
+      OnAuthChallenge(response, error_code);
       break;
     case STUN_ERROR_TRY_ALTERNATE:
-      OnTryAlternate(response, error_code->code());
+      OnTryAlternate(response, error_code);
       break;
     case STUN_ERROR_ALLOCATION_MISMATCH:
       // We must handle this error async because trying to delete the socket in
@@ -1186,10 +1205,10 @@ void TurnAllocateRequest::OnErrorResponse(StunMessage* response) {
                             TurnPort::MSG_ALLOCATE_MISMATCH);
       break;
     default:
-      LOG_J(LS_WARNING, port_) << "Received TURN allocate error response"
-                               << ", id=" << rtc::hex_encode(id())
-                               << ", code=" << error_code->code()
-                               << ", rtt=" << Elapsed();
+      LOG_J(LS_WARNING, port_)
+          << "Received TURN allocate error response"
+          << ", id=" << rtc::hex_encode(id()) << ", code=" << error_code
+          << ", rtt=" << Elapsed();
       port_->OnAllocateError();
   }
 }
@@ -1321,20 +1340,20 @@ void TurnRefreshRequest::OnResponse(StunMessage* response) {
 }
 
 void TurnRefreshRequest::OnErrorResponse(StunMessage* response) {
-  const StunErrorCodeAttribute* error_code = response->GetErrorCode();
+  int error_code = response->GetErrorCodeValue();
 
-  if (error_code->code() == STUN_ERROR_STALE_NONCE) {
+  if (error_code == STUN_ERROR_STALE_NONCE) {
     if (port_->UpdateNonce(response)) {
       // Send RefreshRequest immediately.
       port_->SendRequest(new TurnRefreshRequest(port_), 0);
     }
   } else {
-    LOG_J(LS_WARNING, port_) << "Received TURN refresh error response"
-                             << ", id=" << rtc::hex_encode(id())
-                             << ", code=" << error_code->code()
-                             << ", rtt=" << Elapsed();
+    LOG_J(LS_WARNING, port_)
+        << "Received TURN refresh error response"
+        << ", id=" << rtc::hex_encode(id()) << ", code=" << error_code
+        << ", rtt=" << Elapsed();
     port_->OnRefreshError();
-    port_->SignalTurnRefreshResult(port_, error_code->code());
+    port_->SignalTurnRefreshResult(port_, error_code);
   }
 }
 
@@ -1380,13 +1399,12 @@ void TurnCreatePermissionRequest::OnResponse(StunMessage* response) {
 }
 
 void TurnCreatePermissionRequest::OnErrorResponse(StunMessage* response) {
-  const StunErrorCodeAttribute* error_code = response->GetErrorCode();
+  int error_code = response->GetErrorCodeValue();
   LOG_J(LS_WARNING, port_) << "Received TURN create permission error response"
                            << ", id=" << rtc::hex_encode(id())
-                           << ", code=" << error_code->code()
-                           << ", rtt=" << Elapsed();
+                           << ", code=" << error_code << ", rtt=" << Elapsed();
   if (entry_) {
-    entry_->OnCreatePermissionError(response, error_code->code());
+    entry_->OnCreatePermissionError(response, error_code);
   }
 }
 
@@ -1450,13 +1468,12 @@ void TurnChannelBindRequest::OnResponse(StunMessage* response) {
 }
 
 void TurnChannelBindRequest::OnErrorResponse(StunMessage* response) {
-  const StunErrorCodeAttribute* error_code = response->GetErrorCode();
+  int error_code = response->GetErrorCodeValue();
   LOG_J(LS_WARNING, port_) << "Received TURN channel bind error response"
                            << ", id=" << rtc::hex_encode(id())
-                           << ", code=" << error_code->code()
-                           << ", rtt=" << Elapsed();
+                           << ", code=" << error_code << ", rtt=" << Elapsed();
   if (entry_) {
-    entry_->OnChannelBindError(response, error_code->code());
+    entry_->OnChannelBindError(response, error_code);
   }
 }
 

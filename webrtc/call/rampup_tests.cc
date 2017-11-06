@@ -10,9 +10,9 @@
 
 #include "webrtc/call/rampup_tests.h"
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/platform_thread.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/platform_thread.h"
 #include "webrtc/test/encoder_settings.h"
 #include "webrtc/test/gtest.h"
 #include "webrtc/test/testsupport/perf_test.h"
@@ -54,6 +54,7 @@ RampUpTester::RampUpTester(size_t num_video_streams,
       report_perf_stats_(report_perf_stats),
       sender_call_(nullptr),
       send_stream_(nullptr),
+      send_transport_(nullptr),
       start_bitrate_bps_(start_bitrate_bps),
       min_run_time_ms_(min_run_time_ms),
       expected_bitrate_bps_(0),
@@ -89,9 +90,11 @@ void RampUpTester::OnVideoStreamsCreated(
   send_stream_ = send_stream;
 }
 
-test::PacketTransport* RampUpTester::CreateSendTransport(Call* sender_call) {
+test::PacketTransport* RampUpTester::CreateSendTransport(
+    test::SingleThreadedTaskQueueForTesting* task_queue,
+    Call* sender_call) {
   send_transport_ = new test::PacketTransport(
-      sender_call, this, test::PacketTransport::kSender,
+      task_queue, sender_call, this, test::PacketTransport::kSender,
       test::CallTest::payload_type_map_, forward_transport_config_);
   return send_transport_;
 }
@@ -212,8 +215,8 @@ void RampUpTester::ModifyVideoConfigs(
     if (rtx_) {
       recv_config.rtp.rtx_ssrc = video_rtx_ssrcs_[i];
       recv_config.rtp
-          .rtx_payload_types[send_config->encoder_settings.payload_type] =
-          send_config->rtp.rtx.payload_type;
+          .rtx_associated_payload_types[send_config->rtp.rtx.payload_type] =
+          send_config->encoder_settings.payload_type;
     }
     ++i;
   }

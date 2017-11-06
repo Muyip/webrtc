@@ -12,11 +12,11 @@
 
 #include <string>
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/trace_event.h"
 #include "webrtc/media/engine/internaldecoderfactory.h"
 #include "webrtc/modules/video_coding/include/video_error_codes.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/trace_event.h"
 
 namespace webrtc {
 
@@ -94,7 +94,7 @@ int32_t VideoDecoderSoftwareFallbackWrapper::Decode(
     if (ret == WEBRTC_VIDEO_CODEC_OK) {
       if (fallback_decoder_) {
         // Decode OK -> stop using fallback decoder.
-        LOG(LS_INFO)
+        LOG(LS_WARNING)
             << "Decode OK, no longer using the software fallback decoder.";
         fallback_decoder_->Release();
         fallback_decoder_.reset();

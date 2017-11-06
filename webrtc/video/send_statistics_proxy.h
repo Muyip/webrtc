@@ -16,19 +16,19 @@
 #include <string>
 #include <vector>
 
-#include "webrtc/base/criticalsection.h"
-#include "webrtc/base/numerics/exp_filter.h"
-#include "webrtc/base/ratetracker.h"
-#include "webrtc/base/thread_annotations.h"
 #include "webrtc/common_types.h"
 #include "webrtc/modules/video_coding/include/video_codec_interface.h"
 #include "webrtc/modules/video_coding/include/video_coding_defines.h"
+#include "webrtc/rtc_base/criticalsection.h"
+#include "webrtc/rtc_base/numerics/exp_filter.h"
+#include "webrtc/rtc_base/ratetracker.h"
+#include "webrtc/rtc_base/thread_annotations.h"
 #include "webrtc/system_wrappers/include/clock.h"
 #include "webrtc/video/overuse_frame_detector.h"
 #include "webrtc/video/report_block_stats.h"
 #include "webrtc/video/stats_counter.h"
-#include "webrtc/video/vie_encoder.h"
-#include "webrtc/video_send_stream.h"
+#include "webrtc/video/video_stream_encoder.h"
+#include "webrtc/call/video_send_stream.h"
 
 namespace webrtc {
 
@@ -57,10 +57,16 @@ class SendStatisticsProxy : public CpuOveruseMetricsObserver,
   // Used to update incoming frame rate.
   void OnIncomingFrame(int width, int height);
 
-  void OnCpuRestrictedResolutionChanged(bool cpu_restricted_resolution);
-  void OnQualityRestrictedResolutionChanged(int num_quality_downscales);
-  void SetCpuScalingStats(int num_cpu_downscales);  // -1: disabled.
-  void SetQualityScalingStats(int num_quality_downscales);  // -1: disabled.
+  // Adaptation stats.
+  void SetAdaptationStats(
+      const VideoStreamEncoder::AdaptCounts& cpu_counts,
+      const VideoStreamEncoder::AdaptCounts& quality_counts);
+  void OnCpuAdaptationChanged(
+      const VideoStreamEncoder::AdaptCounts& cpu_counts,
+      const VideoStreamEncoder::AdaptCounts& quality_counts);
+  void OnQualityAdaptationChanged(
+      const VideoStreamEncoder::AdaptCounts& cpu_counts,
+      const VideoStreamEncoder::AdaptCounts& quality_counts);
 
   void OnEncoderStatsUpdate(uint32_t framerate, uint32_t bitrate);
   void OnSuspendChange(bool is_suspended);
@@ -160,6 +166,14 @@ class SendStatisticsProxy : public CpuOveruseMetricsObserver,
   VideoSendStream::StreamStats* GetStatsEntry(uint32_t ssrc)
       EXCLUSIVE_LOCKS_REQUIRED(crit_);
 
+  void SetAdaptTimer(const VideoStreamEncoder::AdaptCounts& counts,
+                     StatsTimer* timer)
+      EXCLUSIVE_LOCKS_REQUIRED(crit_);
+  void UpdateAdaptationStats(
+      const VideoStreamEncoder::AdaptCounts& cpu_counts,
+      const VideoStreamEncoder::AdaptCounts& quality_counts)
+      EXCLUSIVE_LOCKS_REQUIRED(crit_);
+
   Clock* const clock_;
   const std::string payload_name_;
   const VideoSendStream::Config::Rtp rtp_config_;
@@ -215,8 +229,8 @@ class SendStatisticsProxy : public CpuOveruseMetricsObserver,
     RateAccCounter fec_byte_counter_;
     int64_t first_rtcp_stats_time_ms_;
     int64_t first_rtp_stats_time_ms_;
-    StatsTimer cpu_scaling_timer_;
-    StatsTimer quality_scaling_timer_;
+    StatsTimer cpu_adapt_timer_;
+    StatsTimer quality_adapt_timer_;
     BoolSampleCounter paused_time_counter_;
     TargetRateUpdates target_rate_updates_;
     ReportBlockStats report_block_stats_;

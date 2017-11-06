@@ -13,9 +13,9 @@
 #include <string>
 #include <utility>
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
 #include "webrtc/modules/rtp_rtcp/source/byte_io.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
 
 // TODO(palmkvist): make logging more informative in the absence of a file name
 // (or get one)
@@ -123,7 +123,7 @@ bool IvfFileWriter::InitFromFirstFrame(const EncodedImage& encoded_image,
     return false;
 
   const char* codec_name =
-      CodecTypeToPayloadName(codec_type_).value_or("Unknown");
+      CodecTypeToPayloadString(codec_type_);
   LOG(LS_WARNING) << "Created IVF file for codec data of type " << codec_name
                   << " at resolution " << width_ << " x " << height_
                   << ", using " << (using_capture_timestamps_ ? "1" : "90")

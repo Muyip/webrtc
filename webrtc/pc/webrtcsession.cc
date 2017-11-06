@@ -21,16 +21,8 @@
 #include "webrtc/api/jsepicecandidate.h"
 #include "webrtc/api/jsepsessiondescription.h"
 #include "webrtc/api/peerconnectioninterface.h"
-#include "webrtc/base/basictypes.h"
-#include "webrtc/base/bind.h"
-#include "webrtc/base/checks.h"
-#include "webrtc/base/helpers.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/stringencode.h"
-#include "webrtc/base/stringutils.h"
 #include "webrtc/call/call.h"
 #include "webrtc/media/base/mediaconstants.h"
-#include "webrtc/media/base/videocapturer.h"
 #include "webrtc/media/sctp/sctptransportinternal.h"
 #include "webrtc/p2p/base/portallocator.h"
 #include "webrtc/pc/channel.h"
@@ -38,6 +30,13 @@
 #include "webrtc/pc/mediasession.h"
 #include "webrtc/pc/sctputils.h"
 #include "webrtc/pc/webrtcsessiondescriptionfactory.h"
+#include "webrtc/rtc_base/basictypes.h"
+#include "webrtc/rtc_base/bind.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/helpers.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/stringencode.h"
+#include "webrtc/rtc_base/stringutils.h"
 
 #ifdef HAVE_QUIC
 #include "webrtc/p2p/quic/quictransportchannel.h"
@@ -62,8 +61,12 @@ const char kBundleWithoutRtcpMux[] = "RTCP-MUX must be enabled when BUNDLE "
 const char kCreateChannelFailed[] = "Failed to create channels.";
 const char kInvalidCandidates[] = "Description contains invalid candidates.";
 const char kInvalidSdp[] = "Invalid session description.";
-const char kMlineMismatch[] =
-    "Offer and answer descriptions m-lines are not matching. Rejecting answer.";
+const char kMlineMismatchInAnswer[] =
+    "The order of m-lines in answer doesn't match order in offer. Rejecting "
+    "answer.";
+const char kMlineMismatchInSubsequentOffer[] =
+    "The order of m-lines in subsequent offer doesn't match order from "
+    "previous offer/answer.";
 const char kPushDownTDFailed[] =
     "Failed to push down transport description:";
 const char kSdpWithoutDtlsFingerprint[] =
@@ -137,29 +140,37 @@ IceCandidatePairType GetIceCandidatePairCounter(
   return kIceCandidatePairMax;
 }
 
-// Compares |answer| against |offer|. Comparision is done
-// for number of m-lines in answer against offer. If matches true will be
-// returned otherwise false.
-static bool VerifyMediaDescriptions(
-    const SessionDescription* answer, const SessionDescription* offer) {
-  if (offer->contents().size() != answer->contents().size())
+// Verify that the order of media sections in |desc1| matches |desc2|. The
+// number of m= sections could be different.
+static bool MediaSectionsInSameOrder(const SessionDescription* desc1,
+                                     const SessionDescription* desc2) {
+  if (!desc1 || !desc2) {
     return false;
-
-  for (size_t i = 0; i < offer->contents().size(); ++i) {
-    if ((offer->contents()[i].name) != answer->contents()[i].name) {
+  }
+  for (size_t i = 0;
+       i < desc1->contents().size() && i < desc2->contents().size(); ++i) {
+    if ((desc2->contents()[i].name) != desc1->contents()[i].name) {
       return false;
     }
-    const MediaContentDescription* offer_mdesc =
+    const MediaContentDescription* desc2_mdesc =
         static_cast<const MediaContentDescription*>(
-            offer->contents()[i].description);
-    const MediaContentDescription* answer_mdesc =
+            desc2->contents()[i].description);
+    const MediaContentDescription* desc1_mdesc =
         static_cast<const MediaContentDescription*>(
-            answer->contents()[i].description);
-    if (offer_mdesc->type() != answer_mdesc->type()) {
+            desc1->contents()[i].description);
+    if (desc2_mdesc->type() != desc1_mdesc->type()) {
       return false;
     }
   }
   return true;
+}
+
+static bool MediaSectionsHaveSameCount(const SessionDescription* desc1,
+                                       const SessionDescription* desc2) {
+  if (!desc1 || !desc2) {
+    return false;
+  }
+  return desc1->contents().size() == desc2->contents().size();
 }
 
 // Checks that each non-rejected content has SDES crypto keys or a DTLS
@@ -461,7 +472,10 @@ bool CheckForRemoteIceRestart(const SessionDescriptionInterface* old_desc,
 }
 
 WebRtcSession::WebRtcSession(
-    webrtc::MediaControllerInterface* media_controller,
+    Call* call,
+    cricket::ChannelManager* channel_manager,
+    const cricket::MediaConfig& media_config,
+    RtcEventLog* event_log,
     rtc::Thread* network_thread,
     rtc::Thread* worker_thread,
     rtc::Thread* signaling_thread,
@@ -477,8 +491,10 @@ WebRtcSession::WebRtcSession(
       sid_(rtc::ToString(rtc::CreateRandomId64() & LLONG_MAX)),
       transport_controller_(std::move(transport_controller)),
       sctp_factory_(std::move(sctp_factory)),
-      media_controller_(media_controller),
-      channel_manager_(media_controller_->channel_manager()),
+      media_config_(media_config),
+      event_log_(event_log),
+      call_(call),
+      channel_manager_(channel_manager),
       ice_observer_(NULL),
       ice_connection_state_(PeerConnectionInterface::kIceConnectionNew),
       ice_connection_receiving_(true),
@@ -620,17 +636,20 @@ bool WebRtcSession::Initialize(
     webrtc_session_desc_factory_->SetSdesPolicy(cricket::SEC_DISABLED);
   }
 
+  webrtc_session_desc_factory_->set_enable_encrypted_rtp_header_extensions(
+      options.crypto_options.enable_encrypted_rtp_header_extensions);
+
   return true;
 }
 
 void WebRtcSession::Close() {
   SetState(STATE_CLOSED);
   RemoveUnusedChannels(nullptr);
+  call_ = nullptr;
   RTC_DCHECK(!voice_channel_);
   RTC_DCHECK(!video_channel_);
   RTC_DCHECK(!rtp_data_channel_);
   RTC_DCHECK(!sctp_transport_);
-  media_controller_->Close();
 }
 
 cricket::BaseChannel* WebRtcSession::GetChannel(
@@ -1087,7 +1106,7 @@ bool WebRtcSession::EnableBundle(const cricket::ContentGroup& bundle) {
     bool need_rtcp = (ch->rtcp_dtls_transport() != nullptr);
     cricket::DtlsTransportInternal* rtcp_dtls_transport = nullptr;
     if (need_rtcp) {
-      rtcp_dtls_transport = transport_controller_->CreateDtlsTransport_n(
+      rtcp_dtls_transport = transport_controller_->CreateDtlsTransport(
           transport_name, cricket::ICE_CANDIDATE_COMPONENT_RTCP);
     }
 
@@ -1214,6 +1233,8 @@ cricket::IceConfig WebRtcSession::ParseIceConfig(
   ice_config.presume_writable_when_fully_relayed =
       config.presume_writable_when_fully_relayed;
   ice_config.ice_check_min_interval = config.ice_check_min_interval;
+  ice_config.regather_all_networks_interval_range =
+      config.ice_regather_interval_range;
   return ice_config;
 }
 
@@ -1757,7 +1778,7 @@ bool WebRtcSession::CreateVoiceChannel(const cricket::ContentInfo* content,
   }
 
   voice_channel_.reset(channel_manager_->CreateVoiceChannel(
-      media_controller_, rtp_dtls_transport, rtcp_dtls_transport,
+      call_, media_config_, rtp_dtls_transport, rtcp_dtls_transport,
       transport_controller_->signaling_thread(), content->name, SrtpRequired(),
       audio_options_));
   if (!voice_channel_) {
@@ -1799,7 +1820,7 @@ bool WebRtcSession::CreateVideoChannel(const cricket::ContentInfo* content,
   }
 
   video_channel_.reset(channel_manager_->CreateVideoChannel(
-      media_controller_, rtp_dtls_transport, rtcp_dtls_transport,
+      call_, media_config_, rtp_dtls_transport, rtcp_dtls_transport,
       transport_controller_->signaling_thread(), content->name, SrtpRequired(),
       video_options_));
 
@@ -1864,7 +1885,7 @@ bool WebRtcSession::CreateDataChannel(const cricket::ContentInfo* content,
     }
 
     rtp_data_channel_.reset(channel_manager_->CreateRtpDataChannel(
-        media_controller_, rtp_dtls_transport, rtcp_dtls_transport,
+        media_config_, rtp_dtls_transport, rtcp_dtls_transport,
         transport_controller_->signaling_thread(), content->name,
         SrtpRequired()));
 
@@ -1889,6 +1910,16 @@ bool WebRtcSession::CreateDataChannel(const cricket::ContentInfo* content,
   SignalDataChannelCreated();
 
   return true;
+}
+
+Call::Stats WebRtcSession::GetCallStats() {
+  if (!worker_thread()->IsCurrent()) {
+    return worker_thread()->Invoke<Call::Stats>(
+        RTC_FROM_HERE, rtc::Bind(&WebRtcSession::GetCallStats, this));
+  }
+  if (!call_)
+    return Call::Stats();
+  return call_->GetStats();
 }
 
 std::unique_ptr<SessionStats> WebRtcSession::GetStats_n(
@@ -2089,12 +2120,21 @@ bool WebRtcSession::ValidateSessionDescription(
   // m-lines that do not rtcp-mux enabled.
 
   // Verify m-lines in Answer when compared against Offer.
-  if (action == kAnswer) {
+  if (action == kAnswer || action == kPrAnswer) {
     const cricket::SessionDescription* offer_desc =
         (source == cricket::CS_LOCAL) ? remote_description()->description()
                                       : local_description()->description();
-    if (!VerifyMediaDescriptions(sdesc->description(), offer_desc)) {
-      return BadAnswerSdp(source, kMlineMismatch, err_desc);
+    if (!MediaSectionsHaveSameCount(sdesc->description(), offer_desc) ||
+        !MediaSectionsInSameOrder(sdesc->description(), offer_desc)) {
+      return BadAnswerSdp(source, kMlineMismatchInAnswer, err_desc);
+    }
+  } else {
+    // The re-offers should respect the order of m= sections in current local
+    // description. See RFC3264 Section 8 paragraph 4 for more details.
+    if (local_description() &&
+        !MediaSectionsInSameOrder(sdesc->description(),
+                                  local_description()->description())) {
+      return BadOfferSdp(source, kMlineMismatchInSubsequentOffer, err_desc);
     }
   }
 
@@ -2313,7 +2353,8 @@ void WebRtcSession::ReportNegotiatedCiphers(
 
 void WebRtcSession::OnSentPacket_w(const rtc::SentPacket& sent_packet) {
   RTC_DCHECK(worker_thread()->IsCurrent());
-  media_controller_->call_w()->OnSentPacket(sent_packet);
+  RTC_DCHECK(call_);
+  call_->OnSentPacket(sent_packet);
 }
 
 const std::string WebRtcSession::GetTransportName(

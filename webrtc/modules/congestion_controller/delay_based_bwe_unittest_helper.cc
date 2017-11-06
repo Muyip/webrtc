@@ -13,8 +13,9 @@
 #include <limits>
 #include <utility>
 
-#include "webrtc/base/checks.h"
 #include "webrtc/modules/congestion_controller/delay_based_bwe.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/ptr_util.h"
 
 namespace webrtc {
 
@@ -149,6 +150,8 @@ int64_t StreamGenerator::GenerateFrame(std::vector<PacketFeedback>* packets,
 
 DelayBasedBweTest::DelayBasedBweTest()
     : clock_(100000000),
+      acknowledged_bitrate_estimator_(
+          rtc::MakeUnique<AcknowledgedBitrateEstimator>()),
       bitrate_estimator_(new DelayBasedBwe(nullptr, &clock_)),
       stream_generator_(new test::StreamGenerator(1e6,  // Capacity.
                                                   clock_.TimeInMicroseconds())),
@@ -181,8 +184,10 @@ void DelayBasedBweTest::IncomingFeedback(int64_t arrival_time_ms,
                         sequence_number, payload_size, pacing_info);
   std::vector<PacketFeedback> packets;
   packets.push_back(packet);
+  acknowledged_bitrate_estimator_->IncomingPacketFeedbackVector(packets);
   DelayBasedBwe::Result result =
-      bitrate_estimator_->IncomingPacketFeedbackVector(packets);
+      bitrate_estimator_->IncomingPacketFeedbackVector(
+          packets, acknowledged_bitrate_estimator_->bitrate_bps());
   const uint32_t kDummySsrc = 0;
   if (result.updated) {
     bitrate_observer_.OnReceiveBitrateChanged({kDummySsrc},
@@ -213,8 +218,11 @@ bool DelayBasedBweTest::GenerateAndProcessFrame(uint32_t ssrc,
     RTC_CHECK_GE(packet.arrival_time_ms + arrival_time_offset_ms_, 0);
     packet.arrival_time_ms += arrival_time_offset_ms_;
   }
+
+  acknowledged_bitrate_estimator_->IncomingPacketFeedbackVector(packets);
   DelayBasedBwe::Result result =
-      bitrate_estimator_->IncomingPacketFeedbackVector(packets);
+      bitrate_estimator_->IncomingPacketFeedbackVector(
+          packets, acknowledged_bitrate_estimator_->bitrate_bps());
   const uint32_t kDummySsrc = 0;
   if (result.updated) {
     bitrate_observer_.OnReceiveBitrateChanged({kDummySsrc},
@@ -492,7 +500,7 @@ void DelayBasedBweTest::TestWrappingHelper(int silence_time_s) {
   clock_.AdvanceTimeMilliseconds(silence_time_s * 1000);
   send_time_ms += silence_time_s * 1000;
 
-  for (size_t i = 0; i < 23; ++i) {
+  for (size_t i = 0; i < 24; ++i) {
     IncomingFeedback(clock_.TimeInMilliseconds(), send_time_ms,
                      sequence_number++, 1000);
     clock_.AdvanceTimeMilliseconds(2 * kFrameIntervalMs);

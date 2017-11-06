@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "webrtc/call/call.h"
+#include "webrtc/call/rtp_transport_controller_send.h"
 #include "webrtc/logging/rtc_event_log/rtc_event_log.h"
 #include "webrtc/test/encoder_settings.h"
 #include "webrtc/test/fake_audio_device.h"
@@ -22,6 +23,7 @@
 #include "webrtc/test/fake_videorenderer.h"
 #include "webrtc/test/frame_generator_capturer.h"
 #include "webrtc/test/rtp_rtcp_observer.h"
+#include "webrtc/test/single_threaded_task_queue.h"
 
 namespace webrtc {
 
@@ -50,6 +52,9 @@ class CallTest : public ::testing::Test {
   static const uint8_t kUlpfecPayloadType;
   static const uint8_t kFlexfecPayloadType;
   static const uint8_t kAudioSendPayloadType;
+  static const uint8_t kPayloadTypeH264;
+  static const uint8_t kPayloadTypeVP8;
+  static const uint8_t kPayloadTypeVP9;
   static const uint32_t kSendRtxSsrcs[kNumSsrcs];
   static const uint32_t kVideoSendSsrcs[kNumSsrcs];
   static const uint32_t kAudioSendSsrc;
@@ -57,6 +62,7 @@ class CallTest : public ::testing::Test {
   static const uint32_t kReceiverLocalVideoSsrc;
   static const uint32_t kReceiverLocalAudioSsrc;
   static const int kNackRtpHistoryMs;
+  static const uint8_t kDefaultKeepalivePayloadType;
   static const std::map<uint8_t, MediaType> payload_type_map_;
 
  protected:
@@ -91,6 +97,10 @@ class CallTest : public ::testing::Test {
   void CreateVideoStreams();
   void CreateAudioStreams();
   void CreateFlexfecStreams();
+
+  void AssociateFlexfecStreamsWithVideoStreams();
+  void DissociateFlexfecStreamsFromVideoStreams();
+
   void Start();
   void Stop();
   void DestroyStreams();
@@ -100,6 +110,7 @@ class CallTest : public ::testing::Test {
 
   std::unique_ptr<webrtc::RtcEventLog> event_log_;
   std::unique_ptr<Call> sender_call_;
+  RtpTransportControllerSend* sender_call_transport_controller_;
   std::unique_ptr<PacketTransport> send_transport_;
   VideoSendStream::Config video_send_config_;
   VideoEncoderConfig video_encoder_config_;
@@ -123,7 +134,10 @@ class CallTest : public ::testing::Test {
   size_t num_audio_streams_;
   size_t num_flexfec_streams_;
   rtc::scoped_refptr<AudioDecoderFactory> decoder_factory_;
+  rtc::scoped_refptr<AudioEncoderFactory> encoder_factory_;
   test::FakeVideoRenderer fake_renderer_;
+
+  SingleThreadedTaskQueueForTesting task_queue_;
 
  private:
   // TODO(holmer): Remove once VoiceEngine is fully refactored to the new API.
@@ -145,6 +159,8 @@ class CallTest : public ::testing::Test {
 
   VoiceEngineState voe_send_;
   VoiceEngineState voe_recv_;
+  rtc::scoped_refptr<AudioProcessing> apm_send_;
+  rtc::scoped_refptr<AudioProcessing> apm_recv_;
 
   // The audio devices must outlive the voice engines.
   std::unique_ptr<test::FakeAudioDevice> fake_send_audio_device_;
@@ -171,10 +187,15 @@ class BaseTest : public RtpRtcpObserver {
 
   virtual Call::Config GetSenderCallConfig();
   virtual Call::Config GetReceiverCallConfig();
+  virtual void OnRtpTransportControllerSendCreated(
+      RtpTransportControllerSend* controller);
   virtual void OnCallsCreated(Call* sender_call, Call* receiver_call);
 
-  virtual test::PacketTransport* CreateSendTransport(Call* sender_call);
-  virtual test::PacketTransport* CreateReceiveTransport();
+  virtual test::PacketTransport* CreateSendTransport(
+      SingleThreadedTaskQueueForTesting* task_queue,
+      Call* sender_call);
+  virtual test::PacketTransport* CreateReceiveTransport(
+      SingleThreadedTaskQueueForTesting* task_queue);
 
   virtual void ModifyVideoConfigs(
       VideoSendStream::Config* send_config,

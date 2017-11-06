@@ -57,11 +57,14 @@ if (is_android) {
     deps = [
       ":AppRTCMobile_javalib",
       ":AppRTCMobile_resources",
+      "../rtc_base:base_java",
       "//base:base_java",
-      "//webrtc/base:base_java",
     ]
 
-    shared_libraries = [ "//webrtc/sdk/android:libjingle_peerconnection_so" ]
+    shared_libraries = [ "../sdk/android:libjingle_peerconnection_so" ]
+
+    # TODO(sakal): Fix build hooks crbug.com/webrtc/8148
+    no_build_hooks = true
   }
 
   android_library("AppRTCMobile_javalib") {
@@ -94,12 +97,15 @@ if (is_android) {
 
     deps = [
       ":AppRTCMobile_resources",
-      "//webrtc/base:base_java",
-      "//webrtc/examples/androidapp/third_party/autobanh:autobanh_java",
-      "//webrtc/modules/audio_device:audio_device_java",
-      "//webrtc/sdk/android:libjingle_peerconnection_java",
-      "//webrtc/sdk/android:libjingle_peerconnection_metrics_default_java",
+      "../modules/audio_device:audio_device_java",
+      "../rtc_base:base_java",
+      "../sdk/android:libjingle_peerconnection_java",
+      "../sdk/android:libjingle_peerconnection_metrics_default_java",
+      "androidapp/third_party/autobanh:autobanh_java",
     ]
+
+    # TODO(sakal): Fix build hooks crbug.com/webrtc/8148
+    no_build_hooks = true
   }
 
   android_resources("AppRTCMobile_resources") {
@@ -118,34 +124,40 @@ if (is_android) {
 
     deps = [
       ":AppRTCMobile_javalib",
+      "../sdk/android:libjingle_peerconnection_java",
       "//base:base_java_test_support",
       "//third_party/android_support_test_runner:runner_java",
       "//third_party/junit",
-      "//webrtc/sdk/android:libjingle_peerconnection_java",
     ]
+
+    # TODO(sakal): Fix build hooks crbug.com/webrtc/8148
+    no_build_hooks = true
   }
 
   instrumentation_test_apk("AppRTCMobileTestStubbedVideoIO") {
     apk_name = "AppRTCMobileTestStubbedVideoIO"
     android_manifest = "androidtests/AndroidManifest.xml"
 
-    java_files = [ "androidtests/src/org/appspot/apprtc/test/ConnectActivityStubbedInputOutputTest.java" ]
+    java_files = [ "androidtests/src/org/appspot/apprtc/test/CallActivityStubbedInputOutputTest.java" ]
 
     apk_under_test = ":AppRTCMobile"
 
     deps = [
       ":AppRTCMobile_javalib",
+      "../sdk/android:libjingle_peerconnection_java",
       "//third_party/android_support_test_runner:rules_java",
       "//third_party/android_support_test_runner:runner_java",
       "//third_party/espresso:espresso_all_java",
       "//third_party/hamcrest:hamcrest_java",
       "//third_party/junit",
-      "//webrtc/sdk/android:libjingle_peerconnection_java",
     ]
 
     data = [
-      "//resources/reference_video_640x360_30fps.y4m",
+      "../../resources/reference_video_640x360_30fps.y4m",
     ]
+
+    # TODO(sakal): Fix build hooks crbug.com/webrtc/8148
+    no_build_hooks = true
   }
 }
 
@@ -160,14 +172,19 @@ if (is_ios || (is_mac && target_cpu != "x86")) {
       "objc/AppRTCMobile/common/ARDUtilities.h",
       "objc/AppRTCMobile/common/ARDUtilities.m",
     ]
-    configs += [ "//build/config/compiler:enable_arc" ]
     public_configs = [ ":apprtc_common_config" ]
 
-    deps = [
-      "//webrtc/sdk:rtc_sdk_common_objc",
-      "//webrtc/system_wrappers:field_trial_default",
-      "//webrtc/system_wrappers:metrics_default",
-    ]
+    if (is_ios) {
+      deps = [
+        ":AppRTCMobile_ios_frameworks",
+      ]
+    } else {
+      deps = [
+        "../sdk:common_objc",
+        "../system_wrappers:field_trial_default",
+        "../system_wrappers:metrics_default",
+      ]
+    }
   }
 
   config("apprtc_signaling_config") {
@@ -227,15 +244,18 @@ if (is_ios || (is_mac && target_cpu != "x86")) {
       "objc/AppRTCMobile/RTCSessionDescription+JSON.h",
       "objc/AppRTCMobile/RTCSessionDescription+JSON.m",
     ]
-    configs += [ "//build/config/compiler:enable_arc" ]
     public_configs = [ ":apprtc_signaling_config" ]
     deps = [
       ":apprtc_common",
       ":socketrocket",
     ]
-    public_deps = [
-      "//webrtc/sdk:rtc_sdk_peerconnection_objc",
-    ]
+    if (is_ios) {
+      deps += [ ":AppRTCMobile_ios_frameworks" ]
+    } else {
+      public_deps = [
+        "../sdk:peerconnection_objc",
+      ]
+    }
     libs = [ "QuartzCore.framework" ]
   }
 
@@ -260,12 +280,11 @@ if (is_ios || (is_mac && target_cpu != "x86")) {
         "objc/AppRTCMobile/ios/UIImage+ARDUtilities.h",
         "objc/AppRTCMobile/ios/UIImage+ARDUtilities.m",
       ]
-      configs += [ "//build/config/compiler:enable_arc" ]
 
       deps = [
+        ":AppRTCMobile_ios_frameworks",
         ":apprtc_common",
         ":apprtc_signaling",
-        "//webrtc/modules/audio_device",
       ]
     }
 
@@ -293,7 +312,7 @@ if (is_ios || (is_mac && target_cpu != "x86")) {
 
     bundle_data("AppRTCMobile_ios_frameworks") {
       public_deps = [
-        "//webrtc/sdk:rtc_sdk_framework_objc+link",
+        "../sdk:framework_objc+link",
       ]
       sources = [
         "$root_out_dir/WebRTC.framework",
@@ -320,6 +339,8 @@ if (is_ios || (is_mac && target_cpu != "x86")) {
         "objc/AppRTCMobile/ios/resources/ic_switch_video_black_24dp.png",
         "objc/AppRTCMobile/ios/resources/ic_switch_video_black_24dp@2x.png",
         "objc/AppRTCMobile/ios/resources/mozart.mp3",
+        "objc/Icon-120.png",
+        "objc/Icon-180.png",
         "objc/Icon.png",
       ]
       outputs = [
@@ -337,13 +358,11 @@ if (is_ios || (is_mac && target_cpu != "x86")) {
         "objc/AppRTCMobile/mac/APPRTCViewController.h",
         "objc/AppRTCMobile/mac/APPRTCViewController.m",
       ]
-      configs += [
-        "//webrtc:common_objc",
-        "//build/config/compiler:enable_arc",
-      ]
+      configs += [ "..:common_objc" ]
       deps = [
         ":apprtc_common",
         ":apprtc_signaling",
+        "../sdk:ui_objc",
       ]
     }
 
@@ -394,10 +413,7 @@ if (is_ios || (is_mac && target_cpu != "x86")) {
       "objc/AppRTCMobile/third_party/SocketRocket/SRWebSocket.h",
       "objc/AppRTCMobile/third_party/SocketRocket/SRWebSocket.m",
     ]
-    configs += [
-      "//build/config/compiler:enable_arc",
-      ":socketrocket_warning_config",
-    ]
+    configs += [ ":socketrocket_warning_config" ]
     public_configs = [ ":socketrocket_include_config" ]
 
     libs = [
@@ -422,7 +438,7 @@ if (is_ios || (is_mac && target_cpu != "x86")) {
           "objc/AppRTCMobile/tests/ARDSettingsModel_xctest.mm",
         ]
         deps = [
-          "//webrtc/base:rtc_base",
+          "../rtc_base:rtc_base",
         ]
         public_deps = [
           ":AppRTCMobile_ios_frameworks",
@@ -430,7 +446,6 @@ if (is_ios || (is_mac && target_cpu != "x86")) {
           "//build/config/ios:xctest",
           "//third_party/ocmock",
         ]
-        configs += [ "//build/config/compiler:enable_arc" ]
       }
 
       rtc_ios_xctest_test("apprtcmobile_tests") {
@@ -502,7 +517,7 @@ if (is_linux || is_win) {
       ]
       cflags = [ "/wd4245" ]
       configs += [ "//build/config/win:windowed" ]
-      deps += [ "//webrtc/media:rtc_media_base" ]
+      deps += [ "../media:rtc_media_base" ]
     }
     if (is_linux) {
       sources += [
@@ -522,20 +537,18 @@ if (is_linux || is_win) {
     configs += [ ":peerconnection_client_warnings_config" ]
 
     deps += [
+      "../api:libjingle_peerconnection_test_api",
+      "../api:video_frame_api",
+      "../media:rtc_media",
+      "../modules/video_capture:video_capture_module",
+      "../pc:libjingle_peerconnection",
+      "../rtc_base:rtc_base",
+      "../rtc_base:rtc_base_approved",
+      "../rtc_base:rtc_json",
+      "../system_wrappers:field_trial_default",
+      "../system_wrappers:metrics_default",
       "//third_party/libyuv",
-      "//webrtc/api:libjingle_peerconnection_test_api",
-      "//webrtc/api:video_frame_api",
-      "//webrtc/base:rtc_base",
-      "//webrtc/base:rtc_base_approved",
-      "//webrtc/media:rtc_media",
-      "//webrtc/modules/video_capture:video_capture_module",
-      "//webrtc/pc:libjingle_peerconnection",
-      "//webrtc/system_wrappers:field_trial_default",
-      "//webrtc/system_wrappers:metrics_default",
     ]
-    if (rtc_build_json) {
-      deps += [ "//third_party/jsoncpp" ]
-    }
   }
 
   rtc_executable("peerconnection_server") {
@@ -550,9 +563,9 @@ if (is_linux || is_win) {
       "peerconnection/server/utils.h",
     ]
     deps = [
-      "//webrtc:webrtc_common",
-      "//webrtc/base:rtc_base_approved",
-      "//webrtc/tools:command_line_parser",
+      "..:webrtc_common",
+      "../rtc_base:rtc_base_approved",
+      "../rtc_tools:command_line_parser",
     ]
     if (!build_with_chromium && is_clang) {
       # Suppress warnings from the Chromium Clang plugin (bugs.webrtc.org/163).
@@ -565,12 +578,12 @@ if (is_linux || is_win) {
       "relayserver/relayserver_main.cc",
     ]
     deps = [
-      "../base:rtc_base",
-      "//webrtc/base:rtc_base_approved",
-      "//webrtc/p2p:rtc_p2p",
-      "//webrtc/pc:rtc_pc",
-      "//webrtc/system_wrappers:field_trial_default",
-      "//webrtc/system_wrappers:metrics_default",
+      "../p2p:rtc_p2p",
+      "../pc:rtc_pc",
+      "../rtc_base:rtc_base",
+      "../rtc_base:rtc_base_approved",
+      "../system_wrappers:field_trial_default",
+      "../system_wrappers:metrics_default",
     ]
     if (!build_with_chromium && is_clang) {
       # Suppress warnings from the Chromium Clang plugin (bugs.webrtc.org/163).
@@ -583,12 +596,12 @@ if (is_linux || is_win) {
       "turnserver/turnserver_main.cc",
     ]
     deps = [
-      "../base:rtc_base",
-      "//webrtc/base:rtc_base_approved",
-      "//webrtc/p2p:rtc_p2p",
-      "//webrtc/pc:rtc_pc",
-      "//webrtc/system_wrappers:field_trial_default",
-      "//webrtc/system_wrappers:metrics_default",
+      "../p2p:rtc_p2p",
+      "../pc:rtc_pc",
+      "../rtc_base:rtc_base",
+      "../rtc_base:rtc_base_approved",
+      "../system_wrappers:field_trial_default",
+      "../system_wrappers:metrics_default",
     ]
     if (!build_with_chromium && is_clang) {
       # Suppress warnings from the Chromium Clang plugin (bugs.webrtc.org/163).
@@ -601,17 +614,89 @@ if (is_linux || is_win) {
       "stunserver/stunserver_main.cc",
     ]
     deps = [
-      "../base:rtc_base",
-      "//webrtc/base:rtc_base_approved",
-      "//webrtc/p2p:rtc_p2p",
-      "//webrtc/pc:rtc_pc",
-      "//webrtc/system_wrappers:field_trial_default",
-      "//webrtc/system_wrappers:metrics_default",
+      "../p2p:rtc_p2p",
+      "../pc:rtc_pc",
+      "../rtc_base:rtc_base",
+      "../rtc_base:rtc_base_approved",
+      "../system_wrappers:field_trial_default",
+      "../system_wrappers:metrics_default",
     ]
     if (!build_with_chromium && is_clang) {
       # Suppress warnings from the Chromium Clang plugin (bugs.webrtc.org/163).
       suppressed_configs += [ "//build/config/clang:find_bad_constructs" ]
     }
+  }
+}
+
+if (is_win || is_android) {
+  rtc_shared_library("webrtc_unity_plugin") {
+    testonly = true
+    sources = [
+      "unityplugin/simple_peer_connection.cc",
+      "unityplugin/simple_peer_connection.h",
+      "unityplugin/unity_plugin_apis.cc",
+      "unityplugin/unity_plugin_apis.h",
+      "unityplugin/video_observer.cc",
+      "unityplugin/video_observer.h",
+    ]
+
+    if (is_android) {
+      sources += [
+        "unityplugin/classreferenceholder.cc",
+        "unityplugin/classreferenceholder.h",
+        "unityplugin/jni_onload.cc",
+      ]
+    }
+
+    if (!build_with_chromium && is_clang) {
+      # Suppress warnings from the Chromium Clang plugin (bugs.webrtc.org/163).
+      suppressed_configs += [ "//build/config/clang:find_bad_constructs" ]
+    }
+    if (is_win) {
+      cflags = [ "/wd4245" ]
+      configs += [
+        "//build/config/win:windowed",
+        ":peerconnection_client_warnings_config",
+      ]
+    }
+    deps = [
+      "../api:libjingle_peerconnection_test_api",
+      "../api:video_frame_api",
+      "../media:rtc_media",
+      "../media:rtc_media_base",
+      "../modules/video_capture:video_capture_module",
+      "../pc:libjingle_peerconnection",
+      "../rtc_base:rtc_base",
+      "../system_wrappers:field_trial_default",
+      "../system_wrappers:metrics_default",
+    ]
+    if (is_android) {
+      deps += [ "../sdk/android:libjingle_peerconnection_jni" ]
+    }
+  }
+}
+
+if (is_android) {
+  android_library("webrtc_unity_java") {
+    java_files = [ "unityplugin/java/src/org/webrtc/UnityUtility.java" ]
+    deps = [
+      "../rtc_base:base_java",
+      "../sdk/android:libjingle_peerconnection_java",
+    ]
+  }
+
+  dist_jar("libwebrtc_unity") {
+    _target_dir_name = get_label_info(":$target_name", "dir")
+    output = "${root_out_dir}/lib.java${_target_dir_name}/${target_name}.jar"
+    direct_deps_only = true
+    use_interface_jars = false
+    deps = [
+      ":webrtc_unity_java",
+      "../modules/audio_device:audio_device_java",
+      "../rtc_base:base_java",
+      "../sdk/android:libjingle_peerconnection_java",
+      "../sdk/android:libjingle_peerconnection_metrics_default_java",
+    ]
   }
 }
 
@@ -630,10 +715,10 @@ if (!build_with_chromium) {
     }
 
     deps = [
-      "../base:rtc_base",
-      "../base:rtc_base_approved",
       "../p2p:libstunprober",
       "../p2p:rtc_p2p",
+      "../rtc_base:rtc_base",
+      "../rtc_base:rtc_base_approved",
       "../system_wrappers:field_trial_default",
     ]
   }

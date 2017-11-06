@@ -15,17 +15,19 @@
 #include <array>
 #include <vector>
 
-#include "webrtc/base/array_view.h"
-#include "webrtc/base/constructormagic.h"
 #include "webrtc/modules/audio_processing/aec3/aec3_common.h"
 #include "webrtc/modules/audio_processing/aec3/aec_state.h"
 #include "webrtc/modules/audio_processing/aec3/render_buffer.h"
+#include "webrtc/modules/audio_processing/include/audio_processing.h"
+#include "webrtc/rtc_base/array_view.h"
+#include "webrtc/rtc_base/constructormagic.h"
 
 namespace webrtc {
 
 class ResidualEchoEstimator {
  public:
-  ResidualEchoEstimator();
+  explicit ResidualEchoEstimator(
+      const AudioProcessing::Config::EchoCanceller3& config);
   ~ResidualEchoEstimator();
 
   void Estimate(bool using_subtractor_output,
@@ -48,7 +50,7 @@ class ResidualEchoEstimator {
 
   // Estimates the residual echo power based on the estimate of the echo path
   // gain.
-  void NonLinearEstimate(float echo_path_gain,
+  void NonLinearEstimate(bool headset_detected,
                          const std::array<float, kFftLengthBy2Plus1>& X2,
                          const std::array<float, kFftLengthBy2Plus1>& Y2,
                          std::array<float, kFftLengthBy2Plus1>* R2);
@@ -69,8 +71,9 @@ class ResidualEchoEstimator {
       S2_old_;
   std::array<float, kFftLengthBy2Plus1> X2_noise_floor_;
   std::array<int, kFftLengthBy2Plus1> X2_noise_floor_counter_;
+  const AudioProcessing::Config::EchoCanceller3 config_;
 
-  RTC_DISALLOW_COPY_AND_ASSIGN(ResidualEchoEstimator);
+  RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(ResidualEchoEstimator);
 };
 
 }  // namespace webrtc

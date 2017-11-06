@@ -12,10 +12,10 @@
 
 #include <algorithm>
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
 #include "webrtc/logging/rtc_event_log/rtc_event_log.h"
 #include "webrtc/modules/pacing/paced_sender.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
 
 namespace webrtc {
 
@@ -86,6 +86,7 @@ void BitrateProber::OnIncomingPacket(size_t packet_size) {
 
 void BitrateProber::CreateProbeCluster(int bitrate_bps, int64_t now_ms) {
   RTC_DCHECK(probing_state_ != ProbingState::kDisabled);
+  RTC_DCHECK_GT(bitrate_bps, 0);
   while (!clusters_.empty() &&
          now_ms - clusters_.front().time_created_ms > kProbeClusterTimeoutMs) {
     clusters_.pop();
@@ -151,7 +152,7 @@ int BitrateProber::TimeUntilNextProbe(int64_t now_ms) {
 
 PacedPacketInfo BitrateProber::CurrentCluster() const {
   RTC_DCHECK(!clusters_.empty());
-  RTC_DCHECK(ProbingState::kActive == probing_state_);
+  RTC_DCHECK(probing_state_ == ProbingState::kActive);
   return clusters_.front().pace_info;
 }
 
@@ -176,7 +177,7 @@ void BitrateProber::ProbeSent(int64_t now_ms, size_t bytes) {
     }
     cluster->sent_bytes += static_cast<int>(bytes);
     cluster->sent_probes += 1;
-    next_probe_time_ms_ = GetNextProbeTime(clusters_.front());
+    next_probe_time_ms_ = GetNextProbeTime(*cluster);
     if (cluster->sent_bytes >= cluster->pace_info.probe_cluster_min_bytes &&
         cluster->sent_probes >= cluster->pace_info.probe_cluster_min_probes) {
       clusters_.pop();

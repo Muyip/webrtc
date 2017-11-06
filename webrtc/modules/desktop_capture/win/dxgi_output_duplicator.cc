@@ -19,10 +19,11 @@
 
 #include <algorithm>
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
 #include "webrtc/modules/desktop_capture/win/dxgi_texture_mapping.h"
 #include "webrtc/modules/desktop_capture/win/dxgi_texture_staging.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/win32.h"
 
 namespace webrtc {
 
@@ -64,10 +65,12 @@ DxgiOutputDuplicator::DxgiOutputDuplicator(const D3dDevice& device,
                                            const DXGI_OUTPUT_DESC& desc)
     : device_(device),
       output_(output),
+      device_name_(rtc::ToUtf8(desc.DeviceName)),
       desktop_rect_(RECTToDesktopRect(desc.DesktopCoordinates)) {
   RTC_DCHECK(output_);
   RTC_DCHECK(!desktop_rect_.is_empty());
-  RTC_DCHECK(desktop_rect_.width() > 0 && desktop_rect_.height() > 0);
+  RTC_DCHECK_GT(desktop_rect_.width(), 0);
+  RTC_DCHECK_GT(desktop_rect_.height(), 0);
 }
 
 DxgiOutputDuplicator::DxgiOutputDuplicator(DxgiOutputDuplicator&& other) =
@@ -383,7 +386,8 @@ int64_t DxgiOutputDuplicator::num_frames_captured() const {
 
 void DxgiOutputDuplicator::TranslateRect(const DesktopVector& position) {
   desktop_rect_.Translate(position);
-  RTC_DCHECK(desktop_rect_.left() >= 0 && desktop_rect_.top() >= 0);
+  RTC_DCHECK_GE(desktop_rect_.left(), 0);
+  RTC_DCHECK_GE(desktop_rect_.top(), 0);
 }
 
 }  // namespace webrtc

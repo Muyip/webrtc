@@ -51,8 +51,8 @@ rtc_static_library("remote_bitrate_estimator") {
 
   deps = [
     "../..:webrtc_common",
-    "../../base:rtc_base",
-    "../../base:rtc_base_approved",
+    "../../rtc_base:rtc_base",
+    "../../rtc_base:rtc_base_approved",
     "../../system_wrappers",
   ]
 }
@@ -61,6 +61,8 @@ if (rtc_include_tests) {
   rtc_static_library("bwe_simulator_lib") {
     testonly = true
     sources = [
+      "test/bbr_paced_sender.cc",
+      "test/bbr_paced_sender.h",
       "test/bwe.cc",
       "test/bwe.h",
       "test/bwe_test.cc",
@@ -72,6 +74,13 @@ if (rtc_include_tests) {
       "test/bwe_test_framework.cc",
       "test/bwe_test_framework.h",
       "test/bwe_test_logging.h",
+      "test/estimators/bbr.cc",
+      "test/estimators/bbr.h",
+      "test/estimators/congestion_window.cc",
+      "test/estimators/congestion_window.h",
+      "test/estimators/max_bandwidth_filter.cc",
+      "test/estimators/max_bandwidth_filter.h",
+      "test/estimators/min_rtt_filter.h",
       "test/estimators/nada.cc",
       "test/estimators/nada.h",
       "test/estimators/remb.cc",
@@ -109,10 +118,11 @@ if (rtc_include_tests) {
 
     deps = [
       ":remote_bitrate_estimator",
+      "..:module_api",
       "../..:webrtc_common",
-      "../../base:gtest_prod",
-      "../../base:rtc_base",
-      "../../base:rtc_base_approved",
+      "../../rtc_base:gtest_prod",
+      "../../rtc_base:rtc_base",
+      "../../rtc_base:rtc_base_approved",
       "../../system_wrappers",
       "../../test:test_support",
       "../../voice_engine",
@@ -127,13 +137,20 @@ if (rtc_include_tests) {
 
   rtc_source_set("remote_bitrate_estimator_perf_tests") {
     testonly = true
+
+    # Skip restricting visibility on mobile platforms since the tests on those
+    # gets additional generated targets which would require many lines here to
+    # cover (which would be confusing to read and hard to maintain).
+    if (!is_android && !is_ios) {
+      visibility = [ "../..:webrtc_perf_tests" ]
+    }
     sources = [
       "remote_bitrate_estimators_test.cc",
     ]
     deps = [
       ":bwe_simulator_lib",
       ":remote_bitrate_estimator",
-      "../../base:rtc_base_approved",
+      "../../rtc_base:rtc_base_approved",
       "../../test:test_support",
     ]
     if (!build_with_chromium && is_clang) {
@@ -144,9 +161,15 @@ if (rtc_include_tests) {
 
   rtc_source_set("remote_bitrate_estimator_unittests") {
     testonly = true
+
+    # Skip restricting visibility on mobile platforms since the tests on those
+    # gets additional generated targets which would require many lines here to
+    # cover (which would be confusing to read and hard to maintain).
+    if (!is_android && !is_ios) {
+      visibility = [ "..:modules_unittests" ]
+    }
     sources = [
       "aimd_rate_control_unittest.cc",
-      "include/mock/mock_remote_bitrate_observer.h",
       "inter_arrival_unittest.cc",
       "overuse_detector_unittest.cc",
       "remote_bitrate_estimator_abs_send_time_unittest.cc",
@@ -157,6 +180,9 @@ if (rtc_include_tests) {
       "send_time_history_unittest.cc",
       "test/bwe_test_framework_unittest.cc",
       "test/bwe_unittest.cc",
+      "test/estimators/congestion_window_unittest.cc",
+      "test/estimators/max_bandwidth_filter_unittest.cc",
+      "test/estimators/min_rtt_filter_unittest.cc",
       "test/estimators/nada_unittest.cc",
       "test/metric_recorder_unittest.cc",
     ]
@@ -164,8 +190,8 @@ if (rtc_include_tests) {
       ":bwe_simulator_lib",
       ":remote_bitrate_estimator",
       "../..:webrtc_common",
-      "../../base:rtc_base",
-      "../../base:rtc_base_approved",
+      "../../rtc_base:rtc_base",
+      "../../rtc_base:rtc_base_approved",
       "../../system_wrappers:system_wrappers",
       "../../test:field_trial",
       "../../test:test_support",
@@ -195,7 +221,7 @@ if (rtc_include_tests) {
       ":bwe_simulator_lib",
       ":remote_bitrate_estimator",
       "../..:webrtc_common",
-      "../../base:rtc_base_approved",
+      "../../rtc_base:rtc_base_approved",
       "../../test:test_main",
       "//testing/gmock",
       "//testing/gtest",

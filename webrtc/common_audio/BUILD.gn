@@ -63,8 +63,8 @@ rtc_static_library("common_audio") {
   deps = [
     ":sinc_resampler",
     "..:webrtc_common",
-    "../base:gtest_prod",
-    "../base:rtc_base_approved",
+    "../rtc_base:gtest_prod",
+    "../rtc_base:rtc_base_approved",
     "../system_wrappers",
   ]
   public_deps = [
@@ -100,6 +100,23 @@ rtc_static_library("common_audio") {
 
   if (current_cpu == "x86" || current_cpu == "x64") {
     deps += [ ":common_audio_sse2" ]
+  }
+}
+
+rtc_source_set("common_audio_c_arm_asm") {
+  visibility = [ ":*" ]  # Only targets in this file can depend on this.
+  sources = []
+  if (current_cpu == "arm") {
+    sources += [
+      "signal_processing/complex_bit_reverse_arm.S",
+      "signal_processing/spl_sqrt_floor_arm.S",
+    ]
+
+    if (arm_version >= 7) {
+      sources += [ "signal_processing/filter_ar_fast_q12_armv7.S" ]
+    } else {
+      sources += [ "signal_processing/filter_ar_fast_q12.c" ]
+    }
   }
 }
 
@@ -156,19 +173,6 @@ rtc_source_set("common_audio_c") {
     "vad/webrtc_vad.c",
   ]
 
-  if (current_cpu == "arm") {
-    sources += [
-      "signal_processing/complex_bit_reverse_arm.S",
-      "signal_processing/spl_sqrt_floor_arm.S",
-    ]
-
-    if (arm_version >= 7) {
-      sources += [ "signal_processing/filter_ar_fast_q12_armv7.S" ]
-    } else {
-      sources += [ "signal_processing/filter_ar_fast_q12.c" ]
-    }
-  }
-
   if (current_cpu == "mipsel") {
     sources += [
       "signal_processing/complex_bit_reverse_mips.c",
@@ -202,9 +206,11 @@ rtc_source_set("common_audio_c") {
 
   public_configs = [ ":common_audio_config" ]
   deps = [
+    ":common_audio_c_arm_asm",
     ":common_audio_cc",
     "..:webrtc_common",
-    "../base:rtc_base_approved",
+    "../rtc_base:compile_assert_c",
+    "../rtc_base:rtc_base_approved",
     "../system_wrappers:system_wrappers",
   ]
 }
@@ -219,7 +225,7 @@ rtc_source_set("common_audio_cc") {
   public_configs = [ ":common_audio_config" ]
   deps = [
     "..:webrtc_common",
-    "../base:rtc_base_approved",
+    "../rtc_base:rtc_base_approved",
     "../system_wrappers:system_wrappers",
   ]
 }
@@ -230,8 +236,8 @@ rtc_source_set("sinc_resampler") {
   ]
   deps = [
     "..:webrtc_common",
-    "../base:gtest_prod",
-    "../base:rtc_base_approved",
+    "../rtc_base:gtest_prod",
+    "../rtc_base:rtc_base_approved",
     "../system_wrappers",
   ]
 }
@@ -240,9 +246,9 @@ if (current_cpu == "x86" || current_cpu == "x64") {
   rtc_static_library("common_audio_sse2") {
     # TODO(kjellander): Remove (bugs.webrtc.org/6828)
     # Enabling GN check triggers dependency cycle:
-    #   //webrtc/common_audio:common_audio ->
-    #   //webrtc/common_audio:common_audio_sse2 ->
-    #   //webrtc/common_audio:common_audio
+    #   :common_audio ->
+    #   :common_audio_sse2 ->
+    #   :common_audio
     check_includes = false
     sources = [
       "fir_filter_sse.cc",
@@ -267,9 +273,9 @@ if (rtc_build_with_neon) {
   rtc_static_library("common_audio_neon") {
     # TODO(kjellander): Remove (bugs.webrtc.org/6828)
     # Enabling GN check triggers dependency cycle:
-    #   //webrtc/common_audio:common_audio ->
-    #   //webrtc/common_audio:common_audio_neon ->
-    #   //webrtc/common_audio:common_audio
+    #   :common_audio ->
+    #   :common_audio_neon ->
+    #   :common_audio
     check_includes = false
     sources = [
       "fir_filter_neon.cc",
@@ -338,7 +344,7 @@ if (rtc_build_with_neon) {
     }
     deps = [
       ":common_audio_c",
-      "../base:rtc_base_approved",
+      "../rtc_base:rtc_base_approved",
     ]
   }
 }
@@ -395,7 +401,8 @@ if (rtc_include_tests) {
       ":common_audio",
       ":sinc_resampler",
       "..:webrtc_common",
-      "../base:rtc_base_approved",
+      "../rtc_base:rtc_base_approved",
+      "../rtc_base:rtc_base_tests_utils",
       "../system_wrappers",
       "../test:test_main",
       "//testing/gmock",

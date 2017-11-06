@@ -13,9 +13,9 @@
 #include <memory>
 
 #include "webrtc/audio/utility/audio_frame_operations.h"
-#include "webrtc/base/format_macros.h"
-#include "webrtc/base/location.h"
-#include "webrtc/base/logging.h"
+#include "webrtc/rtc_base/format_macros.h"
+#include "webrtc/rtc_base/location.h"
+#include "webrtc/rtc_base/logging.h"
 #include "webrtc/system_wrappers/include/event_wrapper.h"
 #include "webrtc/system_wrappers/include/trace.h"
 #include "webrtc/voice_engine/channel.h"
@@ -247,9 +247,15 @@ void TransmitMixer::GetSendCodecInfo(int* max_sample_rate,
     Channel* channel = it.GetChannel();
     if (channel->Sending()) {
       CodecInst codec;
-      channel->GetSendCodec(codec);
-      *max_sample_rate = std::max(*max_sample_rate, codec.plfreq);
-      *max_channels = std::max(*max_channels, codec.channels);
+      // TODO(ossu): Investigate how this could happen. b/62909493
+      if (channel->GetSendCodec(codec) == 0) {
+        *max_sample_rate = std::max(*max_sample_rate, codec.plfreq);
+        *max_channels = std::max(*max_channels, codec.channels);
+      } else {
+        LOG(LS_WARNING) << "Unable to get send codec for channel "
+                        << channel->ChannelId();
+        RTC_NOTREACHED();
+      }
     }
   }
 }
@@ -307,7 +313,9 @@ TransmitMixer::PrepareDemux(const void* audioSamples,
     }
 
     // --- Measure audio level of speech after all processing.
-    _audioLevel.ComputeLevel(_audioFrame);
+    double sample_duration = static_cast<double>(nSamples) / samplesPerSec;
+    _audioLevel.ComputeLevel(_audioFrame, sample_duration);
+
     return 0;
 }
 
@@ -851,6 +859,14 @@ int16_t TransmitMixer::AudioLevelFullRange() const
     return _audioLevel.LevelFullRange();
 }
 
+double TransmitMixer::GetTotalInputEnergy() const {
+  return _audioLevel.TotalEnergy();
+}
+
+double TransmitMixer::GetTotalInputDuration() const {
+  return _audioLevel.TotalDuration();
+}
+
 bool TransmitMixer::IsRecordingCall()
 {
     return _fileCallRecording;
@@ -936,7 +952,7 @@ int32_t TransmitMixer::MixOrReplaceAudioWithFile(
     {
         // Currently file stream is always mono.
         // TODO(xians): Change the code when FilePlayer supports real stereo.
-        MixWithSat(_audioFrame.data_,
+        MixWithSat(_audioFrame.mutable_data(),
                    _audioFrame.num_channels_,
                    fileBuffer.get(),
                    1,

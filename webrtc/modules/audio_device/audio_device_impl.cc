@@ -8,15 +8,14 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/checks.h"
-#include "webrtc/base/refcount.h"
-#include "webrtc/base/timeutils.h"
+#include "webrtc/modules/audio_device/audio_device_impl.h"
 #include "webrtc/common_audio/signal_processing/include/signal_processing_library.h"
 #include "webrtc/modules/audio_device/audio_device_config.h"
 #include "webrtc/modules/audio_device/audio_device_generic.h"
-#include "webrtc/modules/audio_device/audio_device_impl.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/refcount.h"
+#include "webrtc/rtc_base/timeutils.h"
 #include "webrtc/system_wrappers/include/metrics.h"
 
 #include <assert.h>
@@ -202,7 +201,7 @@ int32_t AudioDeviceModuleImpl::CreatePlatformSpecificObjects() {
 
     if (AudioDeviceWindowsCore::CoreAudioIsSupported()) {
       // create *Windows Core Audio* implementation
-      ptrAudioDevice = new AudioDeviceWindowsCore(Id());
+      ptrAudioDevice = new AudioDeviceWindowsCore();
       LOG(INFO) << "Windows Core Audio APIs will be utilized";
     }
   }
@@ -258,7 +257,7 @@ int32_t AudioDeviceModuleImpl::CreatePlatformSpecificObjects() {
     LOG(INFO) << "attempting to use the Linux PulseAudio APIs...";
 
     // create *Linux PulseAudio* implementation
-    AudioDeviceLinuxPulse* pulseDevice = new AudioDeviceLinuxPulse(Id());
+    AudioDeviceLinuxPulse* pulseDevice = new AudioDeviceLinuxPulse();
     if (pulseDevice->Init() == AudioDeviceGeneric::InitStatus::OK) {
       ptrAudioDevice = pulseDevice;
       LOG(INFO) << "Linux PulseAudio APIs will be utilized";
@@ -267,7 +266,7 @@ int32_t AudioDeviceModuleImpl::CreatePlatformSpecificObjects() {
 #endif
 #if defined(LINUX_ALSA)
       // create *Linux ALSA Audio* implementation
-      ptrAudioDevice = new AudioDeviceLinuxALSA(Id());
+      ptrAudioDevice = new AudioDeviceLinuxALSA();
       if (ptrAudioDevice != NULL) {
         // Pulse Audio was not supported => revert to ALSA instead
         _platformAudioLayer =
@@ -282,7 +281,7 @@ int32_t AudioDeviceModuleImpl::CreatePlatformSpecificObjects() {
   } else if (audioLayer == kLinuxAlsaAudio) {
 #if defined(LINUX_ALSA)
     // create *Linux ALSA Audio* implementation
-    ptrAudioDevice = new AudioDeviceLinuxALSA(Id());
+    ptrAudioDevice = new AudioDeviceLinuxALSA();
     LOG(INFO) << "Linux ALSA APIs will be utilized";
 #endif
   }
@@ -303,7 +302,7 @@ int32_t AudioDeviceModuleImpl::CreatePlatformSpecificObjects() {
 #elif defined(WEBRTC_MAC)
   if (audioLayer == kPlatformDefaultAudio) {
     // Create *Mac Audio* implementation
-    ptrAudioDevice = new AudioDeviceMac(Id());
+    ptrAudioDevice = new AudioDeviceMac();
     LOG(INFO) << "Mac OS X Audio APIs will be utilized";
   }
 #endif  // WEBRTC_MAC
@@ -573,40 +572,6 @@ int32_t AudioDeviceModuleImpl::SpeakerVolume(uint32_t* volume) const {
 
   *volume = level;
   LOG(INFO) << "output: " << *volume;
-  return (0);
-}
-
-// ----------------------------------------------------------------------------
-//  SetWaveOutVolume
-// ----------------------------------------------------------------------------
-
-int32_t AudioDeviceModuleImpl::SetWaveOutVolume(uint16_t volumeLeft,
-                                                uint16_t volumeRight) {
-  LOG(INFO) << __FUNCTION__ << "(" << volumeLeft << ", " << volumeRight << ")";
-  CHECK_INITIALIZED();
-  return (_ptrAudioDevice->SetWaveOutVolume(volumeLeft, volumeRight));
-}
-
-// ----------------------------------------------------------------------------
-//  WaveOutVolume
-// ----------------------------------------------------------------------------
-
-int32_t AudioDeviceModuleImpl::WaveOutVolume(uint16_t* volumeLeft,
-                                             uint16_t* volumeRight) const {
-  LOG(INFO) << __FUNCTION__;
-  CHECK_INITIALIZED();
-
-  uint16_t volLeft(0);
-  uint16_t volRight(0);
-
-  if (_ptrAudioDevice->WaveOutVolume(volLeft, volRight) == -1) {
-    return -1;
-  }
-
-  *volumeLeft = volLeft;
-  *volumeRight = volRight;
-  LOG(INFO) << "output: " << *volumeLeft << ", " << *volumeRight;
-
   return (0);
 }
 

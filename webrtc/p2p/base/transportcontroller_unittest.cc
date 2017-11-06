@@ -11,17 +11,17 @@
 #include <map>
 #include <memory>
 
-#include "webrtc/base/fakesslidentity.h"
-#include "webrtc/base/gunit.h"
-#include "webrtc/base/helpers.h"
-#include "webrtc/base/sslidentity.h"
-#include "webrtc/base/thread.h"
-#include "webrtc/p2p/base/dtlstransportchannel.h"
+#include "webrtc/p2p/base/dtlstransport.h"
 #include "webrtc/p2p/base/fakeportallocator.h"
 #include "webrtc/p2p/base/faketransportcontroller.h"
 #include "webrtc/p2p/base/p2ptransportchannel.h"
 #include "webrtc/p2p/base/portallocator.h"
 #include "webrtc/p2p/base/transportcontroller.h"
+#include "webrtc/rtc_base/fakesslidentity.h"
+#include "webrtc/rtc_base/gunit.h"
+#include "webrtc/rtc_base/helpers.h"
+#include "webrtc/rtc_base/sslidentity.h"
+#include "webrtc/rtc_base/thread.h"
 
 static const int kTimeout = 100;
 static const char kIceUfrag1[] = "TESTICEUFRAG0001";
@@ -832,6 +832,37 @@ TEST_F(TransportControllerTest, TestSetRemoteIceLiteInAnswer) {
   // After receiving remote description with ICEMODE_LITE, transport should
   // have mode set to ICEMODE_LITE.
   EXPECT_EQ(ICEMODE_LITE, transport->fake_ice_transport()->remote_ice_mode());
+}
+
+// Tests that the ICE role remains "controlling" if a subsequent offer that
+// does an ICE restart is received from an ICE lite endpoint. Regression test
+// for: https://crbug.com/710760
+TEST_F(TransportControllerTest,
+       IceRoleIsControllingAfterIceRestartFromIceLiteEndpoint) {
+  FakeDtlsTransport* transport = CreateFakeDtlsTransport("audio", 1);
+  ASSERT_NE(nullptr, transport);
+  std::string err;
+
+  // Initial offer/answer.
+  TransportDescription remote_desc(std::vector<std::string>(), kIceUfrag1,
+                                   kIcePwd1, ICEMODE_LITE,
+                                   CONNECTIONROLE_ACTPASS, nullptr);
+  TransportDescription local_desc(kIceUfrag1, kIcePwd1);
+  ASSERT_TRUE(transport_controller_->SetRemoteTransportDescription(
+      "audio", remote_desc, CA_OFFER, &err));
+  ASSERT_TRUE(transport_controller_->SetLocalTransportDescription(
+      "audio", local_desc, CA_ANSWER, nullptr));
+  // Subsequent ICE restart offer/answer.
+  remote_desc.ice_ufrag = kIceUfrag2;
+  remote_desc.ice_pwd = kIcePwd2;
+  local_desc.ice_ufrag = kIceUfrag2;
+  local_desc.ice_pwd = kIcePwd2;
+  ASSERT_TRUE(transport_controller_->SetRemoteTransportDescription(
+      "audio", remote_desc, CA_OFFER, &err));
+  ASSERT_TRUE(transport_controller_->SetLocalTransportDescription(
+      "audio", local_desc, CA_ANSWER, nullptr));
+
+  EXPECT_EQ(ICEROLE_CONTROLLING, transport->fake_ice_transport()->GetIceRole());
 }
 
 // Tests SetNeedsIceRestartFlag and NeedsIceRestart, setting the flag and then

@@ -8,10 +8,10 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/platform_thread.h"
 #include "webrtc/modules/audio_device/dummy/file_audio_device.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/platform_thread.h"
 #include "webrtc/system_wrappers/include/sleep.h"
 
 namespace webrtc {
@@ -308,16 +308,6 @@ bool FileAudioDevice::Recording() const {
 int32_t FileAudioDevice::SetAGC(bool enable) { return -1; }
 
 bool FileAudioDevice::AGC() const { return false; }
-
-int32_t FileAudioDevice::SetWaveOutVolume(uint16_t volumeLeft,
-                                           uint16_t volumeRight) {
-  return -1;
-}
-
-int32_t FileAudioDevice::WaveOutVolume(uint16_t& volumeLeft,
-                                        uint16_t& volumeRight) const {
-  return -1;
-}
 
 int32_t FileAudioDevice::InitSpeaker() { return -1; }
 

@@ -8,13 +8,13 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "webrtc/test/gtest.h"
-#include "webrtc/base/constructormagic.h"
-#include "webrtc/modules/pacing/paced_sender.h"
 #include "webrtc/modules/congestion_controller/delay_based_bwe.h"
 #include "webrtc/modules/congestion_controller/delay_based_bwe_unittest_helper.h"
+#include "webrtc/modules/pacing/paced_sender.h"
+#include "webrtc/rtc_base/constructormagic.h"
 #include "webrtc/system_wrappers/include/clock.h"
 #include "webrtc/test/field_trial.h"
+#include "webrtc/test/gtest.h"
 
 namespace webrtc {
 
@@ -23,7 +23,24 @@ constexpr int kNumProbesCluster0 = 5;
 constexpr int kNumProbesCluster1 = 8;
 const PacedPacketInfo kPacingInfo0(0, kNumProbesCluster0, 2000);
 const PacedPacketInfo kPacingInfo1(1, kNumProbesCluster1, 4000);
+constexpr float kTargetUtilizationFraction = 0.95f;
 }  // namespace
+
+TEST_F(DelayBasedBweTest, NoCrashEmptyFeedback) {
+  std::vector<PacketFeedback> packet_feedback_vector;
+  bitrate_estimator_->IncomingPacketFeedbackVector(packet_feedback_vector,
+                                                   rtc::Optional<uint32_t>());
+}
+
+TEST_F(DelayBasedBweTest, NoCrashOnlyLostFeedback) {
+  std::vector<PacketFeedback> packet_feedback_vector;
+  packet_feedback_vector.push_back(
+      PacketFeedback(-1, -1, 0, 1500, PacedPacketInfo()));
+  packet_feedback_vector.push_back(
+      PacketFeedback(-1, -1, 1, 1500, PacedPacketInfo()));
+  bitrate_estimator_->IncomingPacketFeedbackVector(packet_feedback_vector,
+                                                   rtc::Optional<uint32_t>());
+}
 
 TEST_F(DelayBasedBweTest, ProbeDetection) {
   int64_t now_ms = clock_.TimeInMilliseconds();
@@ -87,6 +104,8 @@ TEST_F(DelayBasedBweTest, ProbeDetectionSlowerArrival) {
   uint16_t seq_num = 0;
   // First burst sent at 8 * 1000 / 5 = 1600 kbps.
   // Arriving at 8 * 1000 / 7 = 1142 kbps.
+  // Since the receive rate is significantly below the send rate, we expect to
+  // use 95% of the estimated capacity.
   int64_t send_time_ms = 0;
   for (int i = 0; i < kNumProbesCluster1; ++i) {
     clock_.AdvanceTimeMilliseconds(7);
@@ -96,7 +115,8 @@ TEST_F(DelayBasedBweTest, ProbeDetectionSlowerArrival) {
   }
 
   EXPECT_TRUE(bitrate_observer_.updated());
-  EXPECT_NEAR(bitrate_observer_.latest_bitrate(), 1140000u, 10000u);
+  EXPECT_NEAR(bitrate_observer_.latest_bitrate(),
+              kTargetUtilizationFraction * 1140000u, 10000u);
 }
 
 TEST_F(DelayBasedBweTest, ProbeDetectionSlowerArrivalHighBitrate) {
@@ -104,6 +124,8 @@ TEST_F(DelayBasedBweTest, ProbeDetectionSlowerArrivalHighBitrate) {
   uint16_t seq_num = 0;
   // Burst sent at 8 * 1000 / 1 = 8000 kbps.
   // Arriving at 8 * 1000 / 2 = 4000 kbps.
+  // Since the receive rate is significantly below the send rate, we expect to
+  // use 95% of the estimated capacity.
   int64_t send_time_ms = 0;
   for (int i = 0; i < kNumProbesCluster1; ++i) {
     clock_.AdvanceTimeMilliseconds(2);
@@ -113,31 +135,23 @@ TEST_F(DelayBasedBweTest, ProbeDetectionSlowerArrivalHighBitrate) {
   }
 
   EXPECT_TRUE(bitrate_observer_.updated());
-  EXPECT_NEAR(bitrate_observer_.latest_bitrate(), 4000000u, 10000u);
-}
-
-TEST_F(DelayBasedBweTest, GetProbingInterval) {
-  int64_t default_interval_ms = bitrate_estimator_->GetProbingIntervalMs();
-  EXPECT_GT(default_interval_ms, 0);
-  CapacityDropTestHelper(1, true, 333, 0);
-  int64_t interval_ms = bitrate_estimator_->GetProbingIntervalMs();
-  EXPECT_GT(interval_ms, 0);
-  EXPECT_NE(interval_ms, default_interval_ms);
+  EXPECT_NEAR(bitrate_observer_.latest_bitrate(),
+              kTargetUtilizationFraction * 4000000u, 10000u);
 }
 
 TEST_F(DelayBasedBweTest, InitialBehavior) {
-  InitialBehaviorTestHelper(674840);
+  InitialBehaviorTestHelper(730000);
 }
 
 TEST_F(DelayBasedBweTest, RateIncreaseReordering) {
-  RateIncreaseReorderingTestHelper(674840);
+  RateIncreaseReorderingTestHelper(730000);
 }
 TEST_F(DelayBasedBweTest, RateIncreaseRtpTimestamps) {
-  RateIncreaseRtpTimestampsTestHelper(1288);
+  RateIncreaseRtpTimestampsTestHelper(627);
 }
 
 TEST_F(DelayBasedBweTest, CapacityDropOneStream) {
-  CapacityDropTestHelper(1, false, 333, 0);
+  CapacityDropTestHelper(1, false, 300, 0);
 }
 
 TEST_F(DelayBasedBweTest, CapacityDropPosOffsetChange) {
@@ -145,12 +159,13 @@ TEST_F(DelayBasedBweTest, CapacityDropPosOffsetChange) {
 }
 
 TEST_F(DelayBasedBweTest, CapacityDropNegOffsetChange) {
-  CapacityDropTestHelper(1, false, 867, -30000);
+  CapacityDropTestHelper(1, false, 933, -30000);
 }
 
 TEST_F(DelayBasedBweTest, CapacityDropOneStreamWrap) {
   CapacityDropTestHelper(1, true, 333, 0);
 }
+
 TEST_F(DelayBasedBweTest, TestTimestampGrouping) {
   TestTimestampGroupingTestHelper();
 }
@@ -168,6 +183,43 @@ TEST_F(DelayBasedBweTest, TestLongTimeoutAndWrap) {
   // to the wrap, but a big difference in arrival time, if streams aren't
   // properly timed out.
   TestWrappingHelper(10 * 64);
+}
+
+TEST_F(DelayBasedBweTest, TestInitialOveruse) {
+  const uint32_t kStartBitrate = 300e3;
+  const uint32_t kInitialCapacityBps = 200e3;
+  const uint32_t kDummySsrc = 0;
+  // High FPS to ensure that we send a lot of packets in a short time.
+  const int kFps = 90;
+
+  stream_generator_->AddStream(new test::RtpStream(kFps, kStartBitrate));
+  stream_generator_->set_capacity_bps(kInitialCapacityBps);
+
+  // Needed to initialize the AimdRateControl.
+  bitrate_estimator_->SetStartBitrate(kStartBitrate);
+
+  // Produce 30 frames (in 1/3 second) and give them to the estimator.
+  uint32_t bitrate_bps = kStartBitrate;
+  bool seen_overuse = false;
+  for (int i = 0; i < 30; ++i) {
+    bool overuse = GenerateAndProcessFrame(kDummySsrc, bitrate_bps);
+    // The purpose of this test is to ensure that we back down even if we don't
+    // have any acknowledged bitrate estimate yet. Hence, if the test works
+    // as expected, we should not have a measured bitrate yet.
+    EXPECT_FALSE(acknowledged_bitrate_estimator_->bitrate_bps().has_value());
+    if (overuse) {
+      EXPECT_TRUE(bitrate_observer_.updated());
+      EXPECT_NEAR(bitrate_observer_.latest_bitrate(), kStartBitrate / 2, 15000);
+      bitrate_bps = bitrate_observer_.latest_bitrate();
+      seen_overuse = true;
+      break;
+    } else if (bitrate_observer_.updated()) {
+      bitrate_bps = bitrate_observer_.latest_bitrate();
+      bitrate_observer_.Reset();
+    }
+  }
+  EXPECT_TRUE(seen_overuse);
+  EXPECT_NEAR(bitrate_observer_.latest_bitrate(), kStartBitrate / 2, 15000);
 }
 
 }  // namespace webrtc

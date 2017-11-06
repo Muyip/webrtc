@@ -17,9 +17,9 @@
 #include <string>
 #include <vector>
 
-#include "webrtc/base/basictypes.h"
-#include "webrtc/base/bytebuffer.h"
-#include "webrtc/base/socketaddress.h"
+#include "webrtc/rtc_base/basictypes.h"
+#include "webrtc/rtc_base/bytebuffer.h"
+#include "webrtc/rtc_base/socketaddress.h"
 
 namespace cricket {
 
@@ -156,6 +156,9 @@ class StunMessage {
 
   // Gets these specific attribute values.
   const StunErrorCodeAttribute* GetErrorCode() const;
+  // Returns the code inside the error code attribute, if present, and
+  // STUN_ERROR_GLOBAL_FAILURE otherwise.
+  int GetErrorCodeValue() const;
   const StunUInt16ListAttribute* GetUnknownAttributes() const;
 
   // Takes ownership of the specified attribute and adds it to the message.

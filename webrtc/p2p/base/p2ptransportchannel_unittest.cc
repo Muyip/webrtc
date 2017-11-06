@@ -12,23 +12,6 @@
 #include <memory>
 
 #include "webrtc/api/fakemetricsobserver.h"
-#include "webrtc/base/checks.h"
-#include "webrtc/base/dscp.h"
-#include "webrtc/base/fakeclock.h"
-#include "webrtc/base/fakenetwork.h"
-#include "webrtc/base/firewallsocketserver.h"
-#include "webrtc/base/gunit.h"
-#include "webrtc/base/helpers.h"
-#include "webrtc/base/logging.h"
-#include "webrtc/base/natserver.h"
-#include "webrtc/base/natsocketfactory.h"
-#include "webrtc/base/physicalsocketserver.h"
-#include "webrtc/base/proxyserver.h"
-#include "webrtc/base/ptr_util.h"
-#include "webrtc/base/socketaddress.h"
-#include "webrtc/base/ssladapter.h"
-#include "webrtc/base/thread.h"
-#include "webrtc/base/virtualsocketserver.h"
 #include "webrtc/p2p/base/fakeportallocator.h"
 #include "webrtc/p2p/base/icetransportinternal.h"
 #include "webrtc/p2p/base/p2ptransportchannel.h"
@@ -37,6 +20,22 @@
 #include "webrtc/p2p/base/teststunserver.h"
 #include "webrtc/p2p/base/testturnserver.h"
 #include "webrtc/p2p/client/basicportallocator.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/dscp.h"
+#include "webrtc/rtc_base/fakeclock.h"
+#include "webrtc/rtc_base/fakenetwork.h"
+#include "webrtc/rtc_base/firewallsocketserver.h"
+#include "webrtc/rtc_base/gunit.h"
+#include "webrtc/rtc_base/helpers.h"
+#include "webrtc/rtc_base/logging.h"
+#include "webrtc/rtc_base/natserver.h"
+#include "webrtc/rtc_base/natsocketfactory.h"
+#include "webrtc/rtc_base/proxyserver.h"
+#include "webrtc/rtc_base/ptr_util.h"
+#include "webrtc/rtc_base/socketaddress.h"
+#include "webrtc/rtc_base/ssladapter.h"
+#include "webrtc/rtc_base/thread.h"
+#include "webrtc/rtc_base/virtualsocketserver.h"
 
 namespace {
 
@@ -182,14 +181,12 @@ class P2PTransportChannelTestBase : public testing::Test,
                                     public sigslot::has_slots<> {
  public:
   P2PTransportChannelTestBase()
-      : main_(rtc::Thread::Current()),
-        pss_(new rtc::PhysicalSocketServer),
-        vss_(new rtc::VirtualSocketServer(pss_.get())),
+      : vss_(new rtc::VirtualSocketServer()),
         nss_(new rtc::NATSocketServer(vss_.get())),
         ss_(new rtc::FirewallSocketServer(nss_.get())),
-        ss_scope_(ss_.get()),
-        stun_server_(TestStunServer::Create(main_, kStunAddr)),
-        turn_server_(main_, kTurnUdpIntAddr, kTurnUdpExtAddr),
+        main_(ss_.get()),
+        stun_server_(TestStunServer::Create(&main_, kStunAddr)),
+        turn_server_(&main_, kTurnUdpIntAddr, kTurnUdpExtAddr),
         socks_server1_(ss_.get(),
                        kSocksProxyAddrs[0],
                        ss_.get(),
@@ -696,8 +693,8 @@ class P2PTransportChannelTestBase : public testing::Test,
       GetEndpoint(ch)->saved_candidates_.push_back(
           std::unique_ptr<CandidatesData>(new CandidatesData(ch, c)));
     } else {
-      main_->Post(RTC_FROM_HERE, this, MSG_ADD_CANDIDATES,
-                  new CandidatesData(ch, c));
+      main_.Post(RTC_FROM_HERE, this, MSG_ADD_CANDIDATES,
+                 new CandidatesData(ch, c));
     }
   }
   void OnSelectedCandidatePairChanged(
@@ -726,7 +723,7 @@ class P2PTransportChannelTestBase : public testing::Test,
                            const std::vector<Candidate>& candidates) {
     // Candidate removals are not paused.
     CandidatesData* candidates_data = new CandidatesData(ch, candidates);
-    main_->Post(RTC_FROM_HERE, this, MSG_REMOVE_CANDIDATES, candidates_data);
+    main_.Post(RTC_FROM_HERE, this, MSG_REMOVE_CANDIDATES, candidates_data);
   }
 
   // Tcp candidate verification has to be done when they are generated.
@@ -749,7 +746,7 @@ class P2PTransportChannelTestBase : public testing::Test,
   void ResumeCandidates(int endpoint) {
     Endpoint* ed = GetEndpoint(endpoint);
     for (auto& candidate : ed->saved_candidates_) {
-      main_->Post(RTC_FROM_HERE, this, MSG_ADD_CANDIDATES, candidate.release());
+      main_.Post(RTC_FROM_HERE, this, MSG_ADD_CANDIDATES, candidate.release());
     }
     ed->saved_candidates_.clear();
     ed->save_candidates_ = false;
@@ -875,12 +872,10 @@ class P2PTransportChannelTestBase : public testing::Test,
   bool nominated() { return nominated_; }
 
  private:
-  rtc::Thread* main_;
-  std::unique_ptr<rtc::PhysicalSocketServer> pss_;
   std::unique_ptr<rtc::VirtualSocketServer> vss_;
   std::unique_ptr<rtc::NATSocketServer> nss_;
   std::unique_ptr<rtc::FirewallSocketServer> ss_;
-  rtc::SocketServerScope ss_scope_;
+  rtc::AutoSocketServerThread main_;
   std::unique_ptr<TestStunServer> stun_server_;
   TestTurnServer turn_server_;
   rtc::SocksProxyServer socks_server1_;
@@ -1062,6 +1057,7 @@ class P2PTransportChannelTest : public P2PTransportChannelTestBase {
         }
         break;
       default:
+        RTC_NOTREACHED();
         break;
     }
   }
@@ -1366,6 +1362,104 @@ TEST_F(P2PTransportChannelTest,
   DestroyChannels();
 }
 
+// Tests that ICE regathering occurs regularly when
+// regather_all_networks_interval_range configuration value is set.
+TEST_F(P2PTransportChannelTest, TestIceRegatherOnAllNetworksContinual) {
+  rtc::ScopedFakeClock clock;
+  ConfigureEndpoints(OPEN, OPEN, kOnlyLocalPorts, kOnlyLocalPorts);
+
+  // ep1 gathers continually but ep2 does not.
+  const int kRegatherInterval = 2000;
+  IceConfig config1 = CreateIceConfig(1000, GATHER_CONTINUALLY);
+  config1.regather_all_networks_interval_range.emplace(
+      kRegatherInterval, kRegatherInterval);
+  IceConfig config2;
+  CreateChannels(config1, config2);
+
+  EXPECT_TRUE_SIMULATED_WAIT(ep1_ch1()->receiving() && ep1_ch1()->writable() &&
+                                 ep2_ch1()->receiving() &&
+                                 ep2_ch1()->writable(),
+                             kDefaultTimeout, clock);
+
+  fw()->AddRule(false, rtc::FP_ANY, rtc::FD_ANY, kPublicAddrs[0]);
+  // Timeout value such that all connections are deleted.
+  const int kNetworkGatherDuration = 11000;
+  SIMULATED_WAIT(false, kNetworkGatherDuration, clock);
+  // Expect regathering to happen 5 times in 11s with 2s interval.
+  EXPECT_LE(5, GetMetricsObserver(0)->GetEnumCounter(
+                   webrtc::kEnumCounterIceRegathering,
+                   static_cast<int>(IceRegatheringReason::OCCASIONAL_REFRESH)));
+  // Expect no regathering if continual gathering not configured.
+  EXPECT_EQ(0, GetMetricsObserver(1)->GetEnumCounter(
+                   webrtc::kEnumCounterIceRegathering,
+                   static_cast<int>(IceRegatheringReason::OCCASIONAL_REFRESH)));
+
+  DestroyChannels();
+}
+
+// Test that ICE periodic regathering can change the selected connection on the
+// specified interval and that the peers can communicate over the new
+// connection. The test is parameterized to test that it works when regathering
+// is done by the ICE controlling peer and when done by the controlled peer.
+class P2PTransportRegatherAllNetworksTest : public P2PTransportChannelTest {
+ protected:
+  void TestWithRoles(IceRole p1_role, IceRole p2_role) {
+    rtc::ScopedFakeClock clock;
+    ConfigureEndpoints(NAT_SYMMETRIC, NAT_SYMMETRIC, kDefaultPortAllocatorFlags,
+        kDefaultPortAllocatorFlags);
+    set_force_relay(true);
+
+    const int kRegatherInterval = 2000;
+    const int kNumRegathers = 2;
+
+    // Set up peer 1 to auto regather every 2s.
+    IceConfig config1 = CreateIceConfig(1000, GATHER_CONTINUALLY);
+    config1.regather_all_networks_interval_range.emplace(
+        kRegatherInterval, kRegatherInterval);
+    IceConfig config2 = CreateIceConfig(1000, GATHER_CONTINUALLY);
+
+    // Set peer roles.
+    SetIceRole(0, p1_role);
+    SetIceRole(1, p2_role);
+
+    CreateChannels(config1, config2);
+
+    // Wait for initial connection to be made.
+    EXPECT_TRUE_SIMULATED_WAIT(ep1_ch1()->receiving() &&
+                                   ep1_ch1()->writable() &&
+                                   ep2_ch1()->receiving() &&
+                                   ep2_ch1()->writable(),
+                               kMediumTimeout, clock);
+
+    const Connection* initial_selected = ep1_ch1()->selected_connection();
+
+    // Wait long enough for 2 regathering cycles to happen plus some extra so
+    // the new connection has time to settle.
+    const int kWaitRegather =
+        kRegatherInterval * kNumRegathers + kRegatherInterval / 2;
+    SIMULATED_WAIT(false, kWaitRegather, clock);
+    EXPECT_EQ(kNumRegathers, GetMetricsObserver(0)->GetEnumCounter(
+        webrtc::kEnumCounterIceRegathering,
+        static_cast<int>(IceRegatheringReason::OCCASIONAL_REFRESH)));
+
+    const Connection* new_selected = ep1_ch1()->selected_connection();
+
+    // Want the new selected connection to be different.
+    ASSERT_NE(initial_selected, new_selected);
+
+    // Make sure we can communicate over the new connection too.
+    TestSendRecv(clock);
+  }
+};
+
+TEST_F(P2PTransportRegatherAllNetworksTest, TestControlling) {
+  TestWithRoles(ICEROLE_CONTROLLING, ICEROLE_CONTROLLED);
+}
+
+TEST_F(P2PTransportRegatherAllNetworksTest, TestControlled) {
+  TestWithRoles(ICEROLE_CONTROLLED, ICEROLE_CONTROLLING);
+}
+
 // Test that we properly create a connection on a STUN ping from unknown address
 // when the signaling is slow.
 TEST_F(P2PTransportChannelTest, PeerReflexiveCandidateBeforeSignaling) {
@@ -1568,6 +1662,32 @@ TEST_F(P2PTransportChannelTest, IncomingOnlyOpen) {
           ep2_ch1()->writable(),
       kMediumTimeout, clock);
 
+  DestroyChannels();
+}
+
+// Test that two peers can connect when one can only make outgoing TCP
+// connections. This has been observed in some scenarios involving
+// VPNs/firewalls.
+TEST_F(P2PTransportChannelTest, CanOnlyMakeOutgoingTcpConnections) {
+  // The PORTALLOCATOR_ENABLE_ANY_ADDRESS_PORTS flag is required if the
+  // application needs this use case to work, since the application must accept
+  // the tradeoff that more candidates need to be allocated.
+  //
+  // TODO(deadbeef): Later, make this flag the default, and do more elegant
+  // things to ensure extra candidates don't waste resources?
+  ConfigureEndpoints(
+      OPEN, OPEN,
+      kDefaultPortAllocatorFlags | PORTALLOCATOR_ENABLE_ANY_ADDRESS_PORTS,
+      kDefaultPortAllocatorFlags);
+  // In order to simulate nothing working but outgoing TCP connections, prevent
+  // the endpoint from binding to its interface's address as well as the
+  // "any" addresses. It can then only make a connection by using "Connect()".
+  fw()->SetUnbindableIps({rtc::GetAnyIP(AF_INET), rtc::GetAnyIP(AF_INET6),
+                          kPublicAddrs[0].ipaddr()});
+  CreateChannels();
+  // Expect a "prflx" candidate on the side that can only make outgoing
+  // connections, endpoint 0.
+  Test(kPrflxTcpToLocalTcp);
   DestroyChannels();
 }
 
@@ -2059,7 +2179,8 @@ TEST_F(P2PTransportChannelTest, SignalReadyToSendWithPresumedWritable) {
 class P2PTransportChannelSameNatTest : public P2PTransportChannelTestBase {
  protected:
   void ConfigureEndpoints(Config nat_type, Config config1, Config config2) {
-    RTC_CHECK(nat_type >= NAT_FULL_CONE && nat_type <= NAT_SYMMETRIC);
+    RTC_CHECK_GE(nat_type, NAT_FULL_CONE);
+    RTC_CHECK_LE(nat_type, NAT_SYMMETRIC);
     rtc::NATSocketServer::Translator* outer_nat =
         nat()->AddTranslator(kPublicAddrs[0], kNatAddrs[0],
             static_cast<rtc::NATType>(nat_type - NAT_FULL_CONE));
@@ -2150,10 +2271,9 @@ TEST_F(P2PTransportChannelMultihomedTest, TestBasic) {
 TEST_F(P2PTransportChannelMultihomedTest, TestFailoverControlledSide) {
   rtc::ScopedFakeClock clock;
   AddAddress(0, kPublicAddrs[0]);
-  // Adding alternate address will make sure |kPublicAddrs| has the higher
-  // priority than others. This is due to FakeNetwork::AddInterface method.
-  AddAddress(1, kAlternateAddrs[1]);
-  AddAddress(1, kPublicAddrs[1]);
+  // Simulate failing over from Wi-Fi to cell interface.
+  AddAddress(1, kPublicAddrs[1], "eth0", rtc::ADAPTER_TYPE_WIFI);
+  AddAddress(1, kAlternateAddrs[1], "wlan0", rtc::ADAPTER_TYPE_CELLULAR);
 
   // Use only local ports for simplicity.
   SetAllocatorFlags(0, kOnlyLocalPorts);
@@ -2202,10 +2322,9 @@ TEST_F(P2PTransportChannelMultihomedTest, TestFailoverControlledSide) {
 // The controlling side has two interfaces and one will die.
 TEST_F(P2PTransportChannelMultihomedTest, TestFailoverControllingSide) {
   rtc::ScopedFakeClock clock;
-  // Adding alternate address will make sure |kPublicAddrs| has the higher
-  // priority than others. This is due to FakeNetwork::AddInterface method.
-  AddAddress(0, kAlternateAddrs[0]);
-  AddAddress(0, kPublicAddrs[0]);
+  // Simulate failing over from Wi-Fi to cell interface.
+  AddAddress(0, kPublicAddrs[0], "eth0", rtc::ADAPTER_TYPE_WIFI);
+  AddAddress(0, kAlternateAddrs[0], "wlan0", rtc::ADAPTER_TYPE_CELLULAR);
   AddAddress(1, kPublicAddrs[1]);
 
   // Use only local ports for simplicity.
@@ -2349,10 +2468,9 @@ TEST_F(P2PTransportChannelMultihomedTest, TestFailoverWithManyConnections) {
 // increase.
 TEST_F(P2PTransportChannelMultihomedTest, TestIceRenomination) {
   rtc::ScopedFakeClock clock;
-  // Adding alternate address will make sure |kPublicAddrs| has the higher
-  // priority than others. This is due to FakeNetwork::AddInterface method.
-  AddAddress(0, kAlternateAddrs[0]);
-  AddAddress(0, kPublicAddrs[0]);
+  // Simulate failing over from Wi-Fi to cell interface.
+  AddAddress(0, kPublicAddrs[0], "eth0", rtc::ADAPTER_TYPE_WIFI);
+  AddAddress(0, kAlternateAddrs[0], "wlan0", rtc::ADAPTER_TYPE_CELLULAR);
   AddAddress(1, kPublicAddrs[1]);
 
   // Use only local ports for simplicity.
@@ -2410,10 +2528,9 @@ TEST_F(P2PTransportChannelMultihomedTest,
        TestConnectionSwitchDampeningControlledSide) {
   rtc::ScopedFakeClock clock;
   AddAddress(0, kPublicAddrs[0]);
-  // Adding alternate address will make sure |kPublicAddrs| has the higher
-  // priority than others. This is due to FakeNetwork::AddInterface method.
-  AddAddress(1, kAlternateAddrs[1]);
-  AddAddress(1, kPublicAddrs[1]);
+  // Simulate failing over from Wi-Fi to cell interface.
+  AddAddress(1, kPublicAddrs[1], "eth0", rtc::ADAPTER_TYPE_WIFI);
+  AddAddress(1, kAlternateAddrs[1], "wlan0", rtc::ADAPTER_TYPE_CELLULAR);
 
   // Use only local ports for simplicity.
   SetAllocatorFlags(0, kOnlyLocalPorts);
@@ -2469,10 +2586,9 @@ TEST_F(P2PTransportChannelMultihomedTest,
 TEST_F(P2PTransportChannelMultihomedTest,
        TestConnectionSwitchDampeningControllingSide) {
   rtc::ScopedFakeClock clock;
-  // Adding alternate address will make sure |kPublicAddrs| has the higher
-  // priority than others. This is due to FakeNetwork::AddInterface method.
-  AddAddress(0, kAlternateAddrs[0]);
-  AddAddress(0, kPublicAddrs[0]);
+  // Simulate failing over from Wi-Fi to cell interface.
+  AddAddress(0, kPublicAddrs[0], "eth0", rtc::ADAPTER_TYPE_WIFI);
+  AddAddress(0, kAlternateAddrs[0], "wlan0", rtc::ADAPTER_TYPE_CELLULAR);
   AddAddress(1, kPublicAddrs[1]);
 
   // Use only local ports for simplicity.
@@ -2932,9 +3048,7 @@ class P2PTransportChannelPingTest : public testing::Test,
                                     public sigslot::has_slots<> {
  public:
   P2PTransportChannelPingTest()
-      : pss_(new rtc::PhysicalSocketServer),
-        vss_(new rtc::VirtualSocketServer(pss_.get())),
-        ss_scope_(vss_.get()) {}
+      : vss_(new rtc::VirtualSocketServer()), thread_(vss_.get()) {}
 
  protected:
   void PrepareChannel(P2PTransportChannel* ch) {
@@ -3082,9 +3196,8 @@ class P2PTransportChannelPingTest : public testing::Test,
   }
 
  private:
-  std::unique_ptr<rtc::PhysicalSocketServer> pss_;
   std::unique_ptr<rtc::VirtualSocketServer> vss_;
-  rtc::SocketServerScope ss_scope_;
+  rtc::AutoSocketServerThread thread_;
   CandidatePairInterface* last_selected_candidate_pair_ = nullptr;
   int selected_candidate_pair_switches_ = 0;
   int last_sent_packet_id_ = -1;

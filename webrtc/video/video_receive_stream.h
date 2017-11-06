@@ -14,20 +14,21 @@
 #include <memory>
 #include <vector>
 
-#include "webrtc/base/thread_checker.h"
+#include "webrtc/call/rtp_packet_sink_interface.h"
 #include "webrtc/call/syncable.h"
+#include "webrtc/call/video_receive_stream.h"
 #include "webrtc/common_video/include/incoming_video_stream.h"
 #include "webrtc/common_video/libyuv/include/webrtc_libyuv.h"
 #include "webrtc/modules/rtp_rtcp/include/flexfec_receiver.h"
 #include "webrtc/modules/video_coding/frame_buffer2.h"
 #include "webrtc/modules/video_coding/video_coding_impl.h"
+#include "webrtc/rtc_base/sequenced_task_checker.h"
 #include "webrtc/system_wrappers/include/clock.h"
 #include "webrtc/video/receive_statistics_proxy.h"
-#include "webrtc/video/rtp_stream_receiver.h"
 #include "webrtc/video/rtp_streams_synchronizer.h"
+#include "webrtc/video/rtp_video_stream_receiver.h"
 #include "webrtc/video/transport_adapter.h"
 #include "webrtc/video/video_stream_decoder.h"
-#include "webrtc/video_receive_stream.h"
 
 namespace webrtc {
 
@@ -35,7 +36,8 @@ class CallStats;
 class IvfFileWriter;
 class ProcessThread;
 class RTPFragmentationHeader;
-class VieRemb;
+class RtpStreamReceiverInterface;
+class RtpStreamReceiverControllerInterface;
 class VCMTiming;
 class VCMJitterEstimator;
 
@@ -49,20 +51,18 @@ class VideoReceiveStream : public webrtc::VideoReceiveStream,
                            public video_coding::OnCompleteFrameCallback,
                            public Syncable {
  public:
-  VideoReceiveStream(int num_cpu_cores,
+  VideoReceiveStream(RtpStreamReceiverControllerInterface* receiver_controller,
+                     int num_cpu_cores,
                      PacketRouter* packet_router,
                      VideoReceiveStream::Config config,
                      ProcessThread* process_thread,
-                     CallStats* call_stats,
-                     VieRemb* remb);
+                     CallStats* call_stats);
   ~VideoReceiveStream() override;
 
   const Config& config() const { return config_; }
 
   void SignalNetworkState(NetworkState state);
   bool DeliverRtcp(const uint8_t* packet, size_t length);
-
-  bool OnRecoveredPacket(const uint8_t* packet, size_t length);
 
   void SetSync(Syncable* audio_syncable);
 
@@ -80,8 +80,8 @@ class VideoReceiveStream : public webrtc::VideoReceiveStream,
   void EnableEncodedFrameRecording(rtc::PlatformFile file,
                                    size_t byte_limit) override;
 
-  // TODO(nisse): Intended to be part of an RtpPacketReceiver interface.
-  void OnRtpPacket(const RtpPacketReceived& packet);
+  void AddSecondarySink(RtpPacketSinkInterface* sink) override;
+  void RemoveSecondarySink(const RtpPacketSinkInterface* sink) override;
 
   // Implements rtc::VideoSinkInterface<VideoFrame>.
   void OnFrame(const VideoFrame& video_frame) override;
@@ -109,11 +109,11 @@ class VideoReceiveStream : public webrtc::VideoReceiveStream,
   void SetMinimumPlayoutDelay(int delay_ms) override;
 
  private:
-  static bool DecodeThreadFunction(void* ptr);
+  static void DecodeThreadFunction(void* ptr);
   bool Decode();
 
-  rtc::ThreadChecker worker_thread_checker_;
-  rtc::ThreadChecker module_process_thread_checker_;
+  rtc::SequencedTaskChecker worker_sequence_checker_;
+  rtc::SequencedTaskChecker module_process_sequence_checker_;
 
   TransportAdapter transport_adapter_;
   const VideoReceiveStream::Config config_;
@@ -129,7 +129,7 @@ class VideoReceiveStream : public webrtc::VideoReceiveStream,
   vcm::VideoReceiver video_receiver_;
   std::unique_ptr<rtc::VideoSinkInterface<VideoFrame>> incoming_video_stream_;
   ReceiveStatisticsProxy stats_proxy_;
-  RtpStreamReceiver rtp_stream_receiver_;
+  RtpVideoStreamReceiver rtp_video_stream_receiver_;
   std::unique_ptr<VideoStreamDecoder> video_stream_decoder_;
   RtpStreamsSynchronizer rtp_stream_sync_;
 
@@ -139,6 +139,16 @@ class VideoReceiveStream : public webrtc::VideoReceiveStream,
   // Members for the new jitter buffer experiment.
   std::unique_ptr<VCMJitterEstimator> jitter_estimator_;
   std::unique_ptr<video_coding::FrameBuffer> frame_buffer_;
+
+  std::unique_ptr<RtpStreamReceiverInterface> media_receiver_;
+  std::unique_ptr<RtpStreamReceiverInterface> rtx_receiver_;
+
+  // Whenever we are in an undecodable state (stream has just started or due to
+  // a decoding error) we require a keyframe to restart the stream.
+  bool keyframe_required_ = true;
+
+  // If we have successfully decoded any frame.
+  bool frame_decoded_ = false;
 };
 }  // namespace internal
 }  // namespace webrtc

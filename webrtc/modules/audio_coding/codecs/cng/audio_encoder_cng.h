@@ -14,10 +14,10 @@
 #include <memory>
 #include <vector>
 
-#include "webrtc/base/constructormagic.h"
+#include "webrtc/api/audio_codecs/audio_encoder.h"
 #include "webrtc/common_audio/vad/include/vad.h"
-#include "webrtc/modules/audio_coding/codecs/audio_encoder.h"
 #include "webrtc/modules/audio_coding/codecs/cng/webrtc_cng.h"
+#include "webrtc/rtc_base/constructormagic.h"
 
 namespace webrtc {
 

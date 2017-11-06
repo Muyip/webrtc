@@ -15,20 +15,56 @@
 #include <memory>
 #include <vector>
 
-#include "webrtc/base/array_view.h"
-#include "webrtc/base/constructormagic.h"
 #include "webrtc/modules/audio_processing/aec3/aec3_common.h"
 #include "webrtc/modules/audio_processing/aec3/aec3_fft.h"
 #include "webrtc/modules/audio_processing/aec3/fft_data.h"
 #include "webrtc/modules/audio_processing/aec3/render_buffer.h"
 #include "webrtc/modules/audio_processing/logging/apm_data_dumper.h"
+#include "webrtc/rtc_base/array_view.h"
+#include "webrtc/rtc_base/constructormagic.h"
 
 namespace webrtc {
 namespace aec3 {
+// Computes and stores the frequency response of the filter.
+void UpdateFrequencyResponse(
+    rtc::ArrayView<const FftData> H,
+    std::vector<std::array<float, kFftLengthBy2Plus1>>* H2);
+#if defined(WEBRTC_HAS_NEON)
+void UpdateFrequencyResponse_NEON(
+    rtc::ArrayView<const FftData> H,
+    std::vector<std::array<float, kFftLengthBy2Plus1>>* H2);
+#endif
+#if defined(WEBRTC_ARCH_X86_FAMILY)
+void UpdateFrequencyResponse_SSE2(
+    rtc::ArrayView<const FftData> H,
+    std::vector<std::array<float, kFftLengthBy2Plus1>>* H2);
+#endif
+
+// Computes and stores the echo return loss estimate of the filter, which is the
+// sum of the partition frequency responses.
+void UpdateErlEstimator(
+    const std::vector<std::array<float, kFftLengthBy2Plus1>>& H2,
+    std::array<float, kFftLengthBy2Plus1>* erl);
+#if defined(WEBRTC_HAS_NEON)
+void UpdateErlEstimator_NEON(
+    const std::vector<std::array<float, kFftLengthBy2Plus1>>& H2,
+    std::array<float, kFftLengthBy2Plus1>* erl);
+#endif
+#if defined(WEBRTC_ARCH_X86_FAMILY)
+void UpdateErlEstimator_SSE2(
+    const std::vector<std::array<float, kFftLengthBy2Plus1>>& H2,
+    std::array<float, kFftLengthBy2Plus1>* erl);
+#endif
+
 // Adapts the filter partitions.
 void AdaptPartitions(const RenderBuffer& render_buffer,
                      const FftData& G,
                      rtc::ArrayView<FftData> H);
+#if defined(WEBRTC_HAS_NEON)
+void AdaptPartitions_NEON(const RenderBuffer& render_buffer,
+                          const FftData& G,
+                          rtc::ArrayView<FftData> H);
+#endif
 #if defined(WEBRTC_ARCH_X86_FAMILY)
 void AdaptPartitions_SSE2(const RenderBuffer& render_buffer,
                           const FftData& G,
@@ -39,6 +75,11 @@ void AdaptPartitions_SSE2(const RenderBuffer& render_buffer,
 void ApplyFilter(const RenderBuffer& render_buffer,
                  rtc::ArrayView<const FftData> H,
                  FftData* S);
+#if defined(WEBRTC_HAS_NEON)
+void ApplyFilter_NEON(const RenderBuffer& render_buffer,
+                      rtc::ArrayView<const FftData> H,
+                      FftData* S);
+#endif
 #if defined(WEBRTC_ARCH_X86_FAMILY)
 void ApplyFilter_SSE2(const RenderBuffer& render_buffer,
                       rtc::ArrayView<const FftData> H,
@@ -78,6 +119,12 @@ class AdaptiveFirFilter {
     return H2_;
   }
 
+  // Returns the estimate of the impulse response.
+  const std::array<float, kAdaptiveFilterTimeDomainLength>&
+  FilterImpulseResponse() const {
+    return h_;
+  }
+
   void DumpFilter(const char* name) {
     for (auto& H : H_) {
       data_dumper_->DumpRaw(name, H.re);
@@ -86,11 +133,15 @@ class AdaptiveFirFilter {
   }
 
  private:
+  // Constrain the filter partitions in a cyclic manner.
+  void Constrain();
+
   ApmDataDumper* const data_dumper_;
   const Aec3Fft fft_;
   const Aec3Optimization optimization_;
   std::vector<FftData> H_;
   std::vector<std::array<float, kFftLengthBy2Plus1>> H2_;
+  std::array<float, kAdaptiveFilterTimeDomainLength> h_;
   std::array<float, kFftLengthBy2Plus1> erl_;
   size_t partition_to_constrain_ = 0;
 

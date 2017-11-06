@@ -17,7 +17,7 @@
 
 #import "RTCMTLI420Renderer.h"
 
-@interface RTCMTLNSVideoView () <MTKViewDelegate>
+@interface RTCMTLNSVideoView ()<MTKViewDelegate>
 @property(nonatomic) id<RTCMTLRenderer> renderer;
 @property(nonatomic, strong) MTKView *metalView;
 @property(atomic, strong) RTCVideoFrame *videoFrame;
@@ -50,7 +50,7 @@
 #pragma mark - Private
 
 + (BOOL)isMetalAvailable {
-  return YES;
+  return [MTLCopyAllDevices() count] > 0;
 }
 
 - (void)configure {
@@ -90,6 +90,9 @@
 
 #pragma mark - MTKViewDelegate methods
 - (void)drawInMTKView:(nonnull MTKView *)view {
+  if (self.videoFrame == nil) {
+    return;
+  }
   if (view == self.metalView) {
     [_renderer drawFrame:self.videoFrame];
   }

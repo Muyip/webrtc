@@ -15,9 +15,9 @@
 
 #include "webrtc/api/peerconnectioninterface.h"
 #include "webrtc/api/test/fakeconstraints.h"
-#include "webrtc/base/sigslot.h"
 #include "webrtc/pc/test/fakeaudiocapturemodule.h"
 #include "webrtc/pc/test/fakevideotrackrenderer.h"
+#include "webrtc/rtc_base/sigslot.h"
 
 class PeerConnectionTestWrapper
     : public webrtc::PeerConnectionObserver,
@@ -34,7 +34,9 @@ class PeerConnectionTestWrapper
 
   bool CreatePc(
       const webrtc::MediaConstraintsInterface* constraints,
-      const webrtc::PeerConnectionInterface::RTCConfiguration& config);
+      const webrtc::PeerConnectionInterface::RTCConfiguration& config,
+      rtc::scoped_refptr<webrtc::AudioEncoderFactory> audio_encoder_factory,
+      rtc::scoped_refptr<webrtc::AudioDecoderFactory> audio_decoder_factory);
 
   webrtc::PeerConnectionInterface* pc() { return peer_connection_.get(); }
 

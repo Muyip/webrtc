@@ -13,7 +13,7 @@
 #include <limits>
 #include <utility>
 
-#include "webrtc/base/checks.h"
+#include "webrtc/rtc_base/checks.h"
 #include "webrtc/system_wrappers/include/field_trial.h"
 
 namespace webrtc {
@@ -41,13 +41,11 @@ FecControllerPlrBased::Config::Config(
     bool initial_fec_enabled,
     const ThresholdCurve& fec_enabling_threshold,
     const ThresholdCurve& fec_disabling_threshold,
-    int time_constant_ms,
-    const Clock* clock)
+    int time_constant_ms)
     : initial_fec_enabled(initial_fec_enabled),
       fec_enabling_threshold(fec_enabling_threshold),
       fec_disabling_threshold(fec_disabling_threshold),
-      time_constant_ms(time_constant_ms),
-      clock(clock) {}
+      time_constant_ms(time_constant_ms) {}
 
 FecControllerPlrBased::FecControllerPlrBased(
     const Config& config,
@@ -64,8 +62,7 @@ FecControllerPlrBased::FecControllerPlrBased(const Config& config)
           webrtc::field_trial::FindFullName("UseTwccPlrForAna") == "Enabled"
               ? std::unique_ptr<NullSmoothingFilter>(new NullSmoothingFilter())
               : std::unique_ptr<SmoothingFilter>(
-                    new SmoothingFilterImpl(config.time_constant_ms,
-                                            config.clock))) {}
+                    new SmoothingFilterImpl(config.time_constant_ms))) {}
 
 FecControllerPlrBased::~FecControllerPlrBased() = default;
 
@@ -110,8 +107,8 @@ bool FecControllerPlrBased::FecDisablingDecision(
   if (!uplink_bandwidth_bps_ || !packet_loss) {
     return false;
   } else {
-    // Disable when below the curve or exactly on it.
-    return !config_.fec_disabling_threshold.IsAboveCurve(
+    // Disable when below the curve.
+    return config_.fec_disabling_threshold.IsBelowCurve(
         {static_cast<float>(*uplink_bandwidth_bps_), *packet_loss});
   }
 }

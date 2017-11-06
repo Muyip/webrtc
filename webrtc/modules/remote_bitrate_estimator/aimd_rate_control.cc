@@ -14,7 +14,8 @@
 #include <cassert>
 #include <cmath>
 
-#include "webrtc/base/checks.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/safe_minmax.h"
 
 #include "webrtc/modules/remote_bitrate_estimator/overuse_detector.h"
 #include "webrtc/modules/remote_bitrate_estimator/include/bwe_defines.h"
@@ -61,11 +62,11 @@ int64_t AimdRateControl::GetFeedbackInterval() const {
   // Estimate how often we can send RTCP if we allocate up to 5% of bandwidth
   // to feedback.
   static const int kRtcpSize = 80;
-  int64_t interval = static_cast<int64_t>(
+  const int64_t interval = static_cast<int64_t>(
       kRtcpSize * 8.0 * 1000.0 / (0.05 * current_bitrate_bps_) + 0.5);
   const int64_t kMinFeedbackIntervalMs = 200;
-  return std::min(std::max(interval, kMinFeedbackIntervalMs),
-                  kMaxFeedbackIntervalMs);
+  return rtc::SafeClamp(interval, kMinFeedbackIntervalMs,
+                        kMaxFeedbackIntervalMs);
 }
 
 bool AimdRateControl::TimeToReduceFurther(int64_t time_now,
@@ -126,16 +127,26 @@ int AimdRateControl::GetNearMaxIncreaseRateBps() const {
   double bits_per_frame = static_cast<double>(current_bitrate_bps_) / 30.0;
   double packets_per_frame = std::ceil(bits_per_frame / (8.0 * 1200.0));
   double avg_packet_size_bits = bits_per_frame / packets_per_frame;
+
   // Approximate the over-use estimator delay to 100 ms.
   const int64_t response_time = in_experiment_ ? (rtt_ + 100) * 2 : rtt_ + 100;
-
   constexpr double kMinIncreaseRateBps = 4000;
   return static_cast<int>(std::max(
       kMinIncreaseRateBps, (avg_packet_size_bits * 1000) / response_time));
 }
 
-rtc::Optional<int> AimdRateControl::GetLastBitrateDecreaseBps() const {
-  return last_decrease_;
+int AimdRateControl::GetExpectedBandwidthPeriodMs() const {
+  constexpr int kMinPeriodMs = 500;
+  constexpr int kMaxPeriodMs = 50000;
+
+  int increase_rate = GetNearMaxIncreaseRateBps();
+  if (!last_decrease_)
+    return kMinPeriodMs;
+
+  return std::min(kMaxPeriodMs,
+                  std::max<int>(1000 * static_cast<int64_t>(*last_decrease_) /
+                                    increase_rate,
+                                kMinPeriodMs));
 }
 
 uint32_t AimdRateControl::ChangeBitrate(uint32_t new_bitrate_bps,
@@ -183,7 +194,6 @@ uint32_t AimdRateControl::ChangeBitrate(uint32_t new_bitrate_bps,
       break;
 
     case kRcDecrease:
-      bitrate_is_initialized_ = true;
       // Set bit rate to something slightly lower than max
       // to get rid of any self-induced delay.
       new_bitrate_bps =
@@ -198,15 +208,26 @@ uint32_t AimdRateControl::ChangeBitrate(uint32_t new_bitrate_bps,
       }
       ChangeRegion(kRcNearMax);
 
-      if (incoming_bitrate_bps < current_bitrate_bps_) {
-        last_decrease_ =
-            rtc::Optional<int>(current_bitrate_bps_ - new_bitrate_bps);
+      if (bitrate_is_initialized_ &&
+          incoming_bitrate_bps < current_bitrate_bps_) {
+        constexpr float kDegradationFactor = 0.9f;
+        if (new_bitrate_bps <
+            kDegradationFactor * beta_ * current_bitrate_bps_) {
+          // If bitrate decreases more than a normal back off after overuse, it
+          // indicates a real network degradation. We do not let such a decrease
+          // to determine the bandwidth estimation period.
+          last_decrease_ = rtc::Optional<int>();
+        } else {
+          last_decrease_ = rtc::Optional<int>(
+              current_bitrate_bps_ - new_bitrate_bps);
+        }
       }
       if (incoming_bitrate_kbps <
           avg_max_bitrate_kbps_ - 3 * std_max_bit_rate) {
         avg_max_bitrate_kbps_ = -1.0f;
       }
 
+      bitrate_is_initialized_ = true;
       UpdateMaxBitRateEstimate(incoming_bitrate_kbps);
       // Stay on hold until the pipes are cleared.
       rate_control_state_ = kRcHold;
@@ -238,8 +259,8 @@ uint32_t AimdRateControl::MultiplicativeRateIncrease(
     int64_t now_ms, int64_t last_ms, uint32_t current_bitrate_bps) const {
   double alpha = 1.08;
   if (last_ms > -1) {
-    int time_since_last_update_ms = std::min(static_cast<int>(now_ms - last_ms),
-                                             1000);
+    auto time_since_last_update_ms =
+        rtc::SafeMin<int64_t>(now_ms - last_ms, 1000);
     alpha = pow(alpha,  time_since_last_update_ms / 1000.0);
   }
   uint32_t multiplicative_increase_bps = std::max(

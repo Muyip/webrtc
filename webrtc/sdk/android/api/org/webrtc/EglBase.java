@@ -19,7 +19,8 @@ import javax.microedition.khronos.egl.EGL10;
  * Holds EGL state and utility methods for handling an egl 1.0 EGLContext, an EGLDisplay,
  * and an EGLSurface.
  */
-public abstract class EglBase {
+@SuppressWarnings("StaticOrDefaultInterfaceMethod")
+public interface EglBase {
   // EGL wrapper for an actual EGLContext.
   public static class Context {}
 
@@ -33,9 +34,9 @@ public abstract class EglBase {
   // https://android.googlesource.com/platform/frameworks/base/+/master/opengl/java/android/opengl/EGL14.java
   // This is similar to how GlSurfaceView does:
   // http://grepcode.com/file/repository.grepcode.com/java/ext/com.google.android/android/5.1.1_r1/android/opengl/GLSurfaceView.java#760
-  private static final int EGL_OPENGL_ES2_BIT = 4;
+  public static final int EGL_OPENGL_ES2_BIT = 4;
   // Android-specific extension.
-  private static final int EGL_RECORDABLE_ANDROID = 0x3142;
+  public static final int EGL_RECORDABLE_ANDROID = 0x3142;
 
   // clang-format off
   public static final int[] CONFIG_PLAIN = {
@@ -80,8 +81,11 @@ public abstract class EglBase {
   };
   // clang-format on
 
-  // Create a new context with the specified config attributes, sharing data with sharedContext.
-  // |sharedContext| can be null.
+  /**
+   * Create a new context with the specified config attributes, sharing data with |sharedContext|.
+   * If |sharedContext| is null, a root context is created. This function will try to create an EGL
+   * 1.4 context if possible, and an EGL 1.0 context otherwise.
+   */
   public static EglBase create(Context sharedContext, int[] configAttributes) {
     return (EglBase14.isEGL14Supported()
                && (sharedContext == null || sharedContext instanceof EglBase14.Context))
@@ -89,40 +93,82 @@ public abstract class EglBase {
         : new EglBase10((EglBase10.Context) sharedContext, configAttributes);
   }
 
+  /**
+   * Helper function for creating a plain root context. This function will try to create an EGL 1.4
+   * context if possible, and an EGL 1.0 context otherwise.
+   */
   public static EglBase create() {
-    return create(null, CONFIG_PLAIN);
+    return create(null /* shaderContext */, CONFIG_PLAIN);
   }
 
+  /**
+   * Helper function for creating a plain context, sharing data with |sharedContext|. This function
+   * will try to create an EGL 1.4 context if possible, and an EGL 1.0 context otherwise.
+   */
   public static EglBase create(Context sharedContext) {
     return create(sharedContext, CONFIG_PLAIN);
   }
 
-  public abstract void createSurface(Surface surface);
+  /**
+   * Explicitly create a root EGl 1.0 context with the specified config attributes.
+   */
+  public static EglBase createEgl10(int[] configAttributes) {
+    return new EglBase10(null /* shaderContext */, configAttributes);
+  }
+
+  /**
+   * Explicitly create a root EGl 1.0 context with the specified config attributes
+   * and shared context.
+   */
+  public static EglBase createEgl10(
+      javax.microedition.khronos.egl.EGLContext sharedContext, int[] configAttributes) {
+    return new EglBase10(new EglBase10.Context(sharedContext), configAttributes);
+  }
+
+  /**
+   * Explicitly create a root EGl 1.4 context with the specified config attributes.
+   */
+  public static EglBase createEgl14(int[] configAttributes) {
+    return new EglBase14(null /* shaderContext */, configAttributes);
+  }
+
+  /**
+   * Explicitly create a root EGl 1.4 context with the specified config attributes
+   * and shared context.
+   */
+  public static EglBase createEgl14(
+      android.opengl.EGLContext sharedContext, int[] configAttributes) {
+    return new EglBase14(new EglBase14.Context(sharedContext), configAttributes);
+  }
+
+  void createSurface(Surface surface);
 
   // Create EGLSurface from the Android SurfaceTexture.
-  public abstract void createSurface(SurfaceTexture surfaceTexture);
+  void createSurface(SurfaceTexture surfaceTexture);
 
   // Create dummy 1x1 pixel buffer surface so the context can be made current.
-  public abstract void createDummyPbufferSurface();
+  void createDummyPbufferSurface();
 
-  public abstract void createPbufferSurface(int width, int height);
+  void createPbufferSurface(int width, int height);
 
-  public abstract Context getEglBaseContext();
+  Context getEglBaseContext();
 
-  public abstract boolean hasSurface();
+  boolean hasSurface();
 
-  public abstract int surfaceWidth();
+  int surfaceWidth();
 
-  public abstract int surfaceHeight();
+  int surfaceHeight();
 
-  public abstract void releaseSurface();
+  void releaseSurface();
 
-  public abstract void release();
+  void release();
 
-  public abstract void makeCurrent();
+  void makeCurrent();
 
   // Detach the current EGL context, so that it can be made current on another thread.
-  public abstract void detachCurrent();
+  void detachCurrent();
 
-  public abstract void swapBuffers();
+  void swapBuffers();
+
+  void swapBuffers(long presentationTimeStampNs);
 }

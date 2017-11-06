@@ -15,10 +15,10 @@
 #include <vector>
 
 #include "webrtc/api/video/video_frame.h"
+// For EncodedImage
+#include "webrtc/common_video/include/video_frame.h"
 #include "webrtc/modules/include/module_common_types.h"
 #include "webrtc/typedefs.h"
-// For EncodedImage
-#include "webrtc/video_frame.h"
 
 namespace webrtc {
 
@@ -39,7 +39,13 @@ namespace webrtc {
 #define VCM_NO_FRAME_DECODED -11
 #define VCM_NOT_IMPLEMENTED -20
 
-enum { kDefaultStartBitrateKbps = 300 };
+enum {
+  // Timing frames settings. Timing frames are sent every
+  // |kDefaultTimingFramesDelayMs|, or if the frame is at least
+  // |kDefaultOutliserFrameSizePercent| in size of average frame.
+  kDefaultTimingFramesDelayMs = 200,
+  kDefaultOutlierFrameSizePercent = 250,
+};
 
 enum VCMVideoProtection {
   kProtectionNone,
@@ -62,7 +68,9 @@ struct VCMFrameCount {
 class VCMReceiveCallback {
  public:
   virtual int32_t FrameToRender(VideoFrame& videoFrame,  // NOLINT
-                                rtc::Optional<uint8_t> qp) = 0;
+                                rtc::Optional<uint8_t> qp,
+                                VideoContentType content_type) = 0;
+
   virtual int32_t ReceivedDecodedReferenceFrame(const uint64_t pictureId) {
     return -1;
   }
@@ -89,7 +97,9 @@ class VCMSendStatisticsCallback {
 class VCMReceiveStatisticsCallback {
  public:
   virtual void OnReceiveRatesUpdated(uint32_t bitRate, uint32_t frameRate) = 0;
-  virtual void OnCompleteFrame(bool is_keyframe, size_t size_bytes) = 0;
+  virtual void OnCompleteFrame(bool is_keyframe,
+                               size_t size_bytes,
+                               VideoContentType content_type) = 0;
   virtual void OnDiscardedPacketsUpdated(int discarded_packets) = 0;
   virtual void OnFrameCountsUpdated(const FrameCounts& frame_counts) = 0;
   virtual void OnFrameBufferTimingsUpdated(int decode_ms,
@@ -99,6 +109,8 @@ class VCMReceiveStatisticsCallback {
                                            int jitter_buffer_ms,
                                            int min_playout_delay_ms,
                                            int render_delay_ms) = 0;
+
+  virtual void OnTimingFrameInfoUpdated(const TimingFrameInfo& info) = 0;
 
  protected:
   virtual ~VCMReceiveStatisticsCallback() {}

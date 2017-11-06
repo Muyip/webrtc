@@ -10,8 +10,8 @@
 
 #include "webrtc/modules/audio_device/ios/audio_device_ios.h"
 
-#include "webrtc/base/checks.h"
-#include "webrtc/base/logging.h"
+#include "webrtc/rtc_base/checks.h"
+#include "webrtc/rtc_base/logging.h"
 
 namespace webrtc {
 
@@ -63,16 +63,6 @@ int32_t AudioDeviceIOS::SetSpeakerVolume(uint32_t volume) {
 }
 
 int32_t AudioDeviceIOS::SpeakerVolume(uint32_t& volume) const {
-  RTC_NOTREACHED() << "Not implemented";
-  return -1;
-}
-
-int32_t AudioDeviceIOS::SetWaveOutVolume(uint16_t, uint16_t) {
-  RTC_NOTREACHED() << "Not implemented";
-  return -1;
-}
-
-int32_t AudioDeviceIOS::WaveOutVolume(uint16_t&, uint16_t&) const {
   RTC_NOTREACHED() << "Not implemented";
   return -1;
 }
